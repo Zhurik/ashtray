@@ -1,0 +1,6 @@
+/target
+
+# SQLite database files created at runtime
+*.db
+*.db-wal
+*.db-shm
