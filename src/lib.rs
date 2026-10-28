@@ -3,6 +3,7 @@ pub mod db;
 pub mod error;
 pub mod extract;
 pub mod models;
+pub mod reason;
 pub mod routes;
 
 use axum::Router;

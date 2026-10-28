@@ -51,8 +51,37 @@ curl -X POST http://127.0.0.1:8080/api/entries \
 
 Limits: author 40 characters, link 200 characters and `http`/`https` only,
 message 800 characters. Characters, not bytes. Anything outside them comes
-back as `422` with `{"error": "invalid_entry", "message": "…"}`; a body that
-is not JSON comes back as `400` in the same shape.
+back as `422`, and a body that is not JSON as `400` or `415`. Every refusal has
+the same shape:
+
+```json
+{
+  "error": "invalid_entry",
+  "reason": "link_not_http",
+  "message": "The link has to be http or https."
+}
+```
+
+`message` is English prose for whoever is reading the response by hand. A client
+that shows its own wording — in its own language — switches on `reason` instead,
+so these names are part of the API and do not change once published:
+
+| `reason` | Status | What happened |
+| --- | --- | --- |
+| `name_too_long` | 422 | The name is over 40 characters |
+| `link_too_long` | 422 | The link is over 200 characters |
+| `link_not_a_url` | 422 | The link does not parse as a URL |
+| `link_not_http` | 422 | The link parses, but is not `http` or `https` |
+| `message_empty` | 422 | The message is missing, empty, or only spaces |
+| `message_too_long` | 422 | The message is over 800 characters |
+| `malformed_json` | 400 | The body is not the JSON this endpoint expects |
+| `unsupported_content_type` | 415 | The request came without `Content-Type: application/json` |
+| `unreadable_body` | 400 | The body never arrived in a readable state |
+| `internal` | 500 | Something broke here; the cause is in the log, not the response |
+
+`error` stays as the coarse class — `invalid_entry`, `bad_request`,
+`internal_error` — for a client that only wants to tell "your fault" from
+"our fault".
 
 ### `GET /api/entries`
 

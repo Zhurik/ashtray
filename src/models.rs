@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 use crate::error::ApiError;
+use crate::reason::Reason;
 
 pub const MAX_AUTHOR_CHARS: usize = 40;
 pub const MAX_URL_CHARS: usize = 200;
@@ -44,9 +45,7 @@ impl NewEntry {
         if let Some(author) = &author
             && author.chars().count() > MAX_AUTHOR_CHARS
         {
-            return Err(ApiError::Invalid(format!(
-                "The name is longer than {MAX_AUTHOR_CHARS} characters."
-            )));
+            return Err(ApiError::Invalid(Reason::NameTooLong));
         }
 
         let url = match optional(self.url) {
@@ -54,12 +53,9 @@ impl NewEntry {
             Some(url) => Some(validate_url(url)?),
         };
 
-        let body = optional(self.body)
-            .ok_or_else(|| ApiError::Invalid("The message is empty.".to_owned()))?;
+        let body = optional(self.body).ok_or(ApiError::Invalid(Reason::MessageEmpty))?;
         if body.chars().count() > MAX_BODY_CHARS {
-            return Err(ApiError::Invalid(format!(
-                "The message is longer than {MAX_BODY_CHARS} characters."
-            )));
+            return Err(ApiError::Invalid(Reason::MessageTooLong));
         }
 
         Ok(ValidEntry { author, url, body })
@@ -75,18 +71,13 @@ fn optional(value: impl Into<Option<String>>) -> Option<String> {
 
 fn validate_url(url: String) -> Result<String, ApiError> {
     if url.chars().count() > MAX_URL_CHARS {
-        return Err(ApiError::Invalid(format!(
-            "The link is longer than {MAX_URL_CHARS} characters."
-        )));
+        return Err(ApiError::Invalid(Reason::LinkTooLong));
     }
 
-    let parsed = url::Url::parse(&url)
-        .map_err(|_| ApiError::Invalid("The link is not a URL.".to_owned()))?;
+    let parsed = url::Url::parse(&url).map_err(|_| ApiError::Invalid(Reason::LinkNotAUrl))?;
 
     if !matches!(parsed.scheme(), "http" | "https") {
-        return Err(ApiError::Invalid(
-            "The link has to be http or https.".to_owned(),
-        ));
+        return Err(ApiError::Invalid(Reason::LinkNotHttp));
     }
 
     Ok(url)
