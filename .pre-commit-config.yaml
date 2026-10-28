@@ -1,0 +1,57 @@
+# Hooks for this repository. Install them once per clone with:
+#
+#   pre-commit install --install-hooks
+#
+# `default_install_hook_types` makes that single command wire up both the
+# pre-commit and the pre-push hook. Fast checks run on commit; the test suite
+# runs on push, so committing stays quick.
+minimum_pre_commit_version: "3.2.0"
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-toml
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+      - id: forbid-submodules
+
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.51.1
+    hooks:
+      - id: typos
+        exclude: ^Cargo\.lock$
+
+  # Cargo lives outside pre-commit's isolated environments, so these are
+  # `language: system` and run against the whole workspace rather than the
+  # staged files: rustc needs every module to compile anything at all.
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --all-targets --all-features --locked -- -D warnings
+        language: system
+        types_or: [rust, toml]
+        pass_filenames: false
+
+      - id: cargo-test
+        name: cargo test
+        entry: cargo test --all-features --locked
+        language: system
+        types_or: [rust, toml, sql]
+        pass_filenames: false
+        stages: [pre-push]
