@@ -1,8 +1,21 @@
+---
 services:
   ashtray:
     build: .
     ports:
-      - "8080:8080"
+      - "${ASHTRAY_PORT:-8080}:8080"
+    # Every value below can be overridden from the shell or from a `.env` file
+    # next to this one, e.g. `ASHTRAY_LOG=ashtray=debug docker compose up`.
+    environment:
+      # The container port is fixed by the image's health check, so change the
+      # published port through ASHTRAY_PORT rather than the bind address.
+      ASHTRAY_BIND_ADDR: ${ASHTRAY_BIND_ADDR:-0.0.0.0:8080}
+      ASHTRAY_DATABASE_URL: ${ASHTRAY_DATABASE_URL:-sqlite:///data/ashtray.db}
+      ASHTRAY_MAX_CONNECTIONS: ${ASHTRAY_MAX_CONNECTIONS:-5}
+      ASHTRAY_LOG: ${ASHTRAY_LOG:-info}
+      # No default: unset means no backtraces. Set to 1 or `full` to get them
+      # on a panic.
+      # RUST_BACKTRACE: ${RUST_BACKTRACE}
     volumes:
       - ashtray-data:/data
     restart: unless-stopped

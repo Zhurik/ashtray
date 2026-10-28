@@ -6,6 +6,8 @@ FROM rust:1.98-slim-trixie AS builder
 WORKDIR /app
 
 # libsqlite3-sys compiles a bundled SQLite, so the builder needs a C toolchain.
+# Pinning apt versions breaks the build every time Debian ships a point release.
+# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -26,6 +28,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 FROM debian:trixie-slim
 
 # curl is here for the health check and nothing else.
+# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
@@ -40,11 +43,14 @@ ENV ASHTRAY_BIND_ADDR=0.0.0.0:8080 \
     ASHTRAY_DATABASE_URL=sqlite:///data/ashtray.db \
     ASHTRAY_LOG=info
 
-USER ashtray
+USER 10001:10001
 WORKDIR /data
 VOLUME ["/data"]
 EXPOSE 8080
 
+# The shell form is deliberate: `|| exit 1` maps every curl failure to the one
+# exit code Docker reads as unhealthy.
+# hadolint ignore=DL3025
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8080/health || exit 1
 

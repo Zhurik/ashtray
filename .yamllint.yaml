@@ -1,0 +1,12 @@
+---
+extends: default
+
+rules:
+  line-length: disable
+  # `on:` in GitHub workflows is a key, not a boolean.
+  truthy:
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+  indentation:
+    indent-sequences: consistent

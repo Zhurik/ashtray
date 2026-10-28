@@ -4,3 +4,6 @@
 *.db
 *.db-wal
 *.db-shm
+
+# Release tooling
+/node_modules

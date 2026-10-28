@@ -11,3 +11,12 @@ Dockerfile
 .dockerignore
 compose.yaml
 README.md
+
+# Release and CI tooling has nothing to do with the image.
+/node_modules
+/.github
+package.json
+package-lock.json
+*.config.cjs
+*.config.mjs
+CHANGELOG.md
