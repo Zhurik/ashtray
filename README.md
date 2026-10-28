@@ -100,6 +100,30 @@ docker run -p 8080:8080 -v ashtray-data:/data ashtray
 Every variable from the table above still works, e.g.
 `docker run -e ASHTRAY_LOG=ashtray=debug …`.
 
+## Hooks
+
+Formatting and lints run through [pre-commit](https://pre-commit.com). Wire
+them into the clone once:
+
+```sh
+pre-commit install --install-hooks
+```
+
+That installs both hook types the config asks for. On commit: whitespace and
+file hygiene, `typos`, `cargo fmt --check`, and `cargo clippy --all-targets
+-D warnings`. On push: `cargo test`, which is the slow one and does not belong
+in the way of a commit.
+
+Run everything by hand without committing:
+
+```sh
+pre-commit run --all-files                        # commit-stage hooks
+pre-commit run --all-files --hook-stage pre-push  # those plus the tests
+```
+
+`git commit --no-verify` skips them when a work-in-progress commit has to
+land anyway.
+
 ## What it deliberately does not do yet
 
 - **No moderation.** Every entry is public the moment it is written. A
