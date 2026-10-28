@@ -79,6 +79,27 @@ The database file is created on first start and migrations run themselves.
 cargo test
 ```
 
+### In Docker
+
+```sh
+docker compose up --build
+```
+
+The image listens on `0.0.0.0:8080` and keeps the database in `/data`, which
+`compose.yaml` mounts as a named volume so the entries outlive the container.
+`HEALTHCHECK` polls `/health`, the process runs as an unprivileged user, and
+`SIGTERM` from `docker stop` goes through the graceful shutdown.
+
+Without Compose:
+
+```sh
+docker build -t ashtray .
+docker run -p 8080:8080 -v ashtray-data:/data ashtray
+```
+
+Every variable from the table above still works, e.g.
+`docker run -e ASHTRAY_LOG=ashtray=debug …`.
+
 ## What it deliberately does not do yet
 
 - **No moderation.** Every entry is public the moment it is written. A

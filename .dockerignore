@@ -1,0 +1,13 @@
+/target
+/.git
+/.gitignore
+
+# Local database files never belong in the image.
+*.db
+*.db-wal
+*.db-shm
+
+Dockerfile
+.dockerignore
+compose.yaml
+README.md
