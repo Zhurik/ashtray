@@ -99,7 +99,42 @@ The database file is created on first start and migrations run themselves.
 cargo test
 ```
 
-### In Docker
+### Prebuilt image
+
+Every release is published to a public registry, no login needed, for
+`linux/amd64` and `linux/arm64`:
+
+```sh
+docker pull zhurik.cr.cloud.ru/ashtray:latest
+docker run -d -p 8080:8080 -v ashtray-data:/data zhurik.cr.cloud.ru/ashtray:latest
+```
+
+Tags: `latest`, the exact version (`0.1.0`), and the moving `0.1` and `0`
+lines. Pin one of the versioned tags anywhere that should not change under
+you.
+
+Nothing from this repository is needed to run it. A minimal `compose.yaml`:
+
+```yaml
+services:
+  ashtray:
+    image: zhurik.cr.cloud.ru/ashtray:0
+    ports:
+      - "8080:8080"
+    environment:
+      ASHTRAY_LOG: info
+    volumes:
+      - ashtray-data:/data
+    restart: unless-stopped
+
+volumes:
+  ashtray-data:
+```
+
+The variables, volume and health check are the same as below.
+
+### Building it yourself
+
 
 ```sh
 docker compose up --build
@@ -161,7 +196,7 @@ A green `CI` on `main` triggers `Release`, which runs
 [semantic-release](https://github.com/semantic-release/semantic-release). It
 reads the Conventional Commits since the last tag, picks the next version,
 writes it into `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md`, builds and pushes
-a `linux/amd64` + `linux/arm64` image tagged `latest`, `X.Y.Z`, `X.Y` and `X`,
+a `linux/amd64` + `linux/arm64` image to `zhurik.cr.cloud.ru/ashtray` tagged `latest`, `X.Y.Z`, `X.Y` and `X`,
 and publishes a GitHub release. `fix:` makes a patch, `feat:` a minor,
 `BREAKING CHANGE:` a major; `chore:`, `docs:` and the rest release nothing.
 
