@@ -2,32 +2,80 @@
 #
 #   pre-commit install --install-hooks
 #
-# `default_install_hook_types` makes that single command wire up both the
-# pre-commit and the pre-push hook. Fast checks run on commit; the test suite
-# runs on push, so committing stays quick.
-minimum_pre_commit_version: "3.2.0"
-default_install_hook_types: [pre-commit, pre-push]
+# `default_install_hook_types` makes that single command wire up every hook
+# type below. Fast checks run on commit; the test suite runs on push, so
+# committing stays quick. The commit message is checked against Conventional
+# Commits, because semantic-release reads it to pick the next version.
+---
+minimum_pre_commit_version: "4.0.0"
+default_install_hook_types: [pre-commit, pre-merge-commit, commit-msg, pre-push]
+default_stages: [pre-commit, pre-merge-commit]
+
+# Generated files: the lockfiles belong to their package managers and the
+# changelog to semantic-release, so no hook may rewrite them.
+exclude: |
+  (?x)^(
+    Cargo\.lock|
+    package-lock\.json|
+    CHANGELOG\.md
+  )$
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # Hygiene: whitespace, line endings, final newlines.
       - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
       - id: end-of-file-fixer
       - id: mixed-line-ending
         args: [--fix=lf]
+      - id: fix-byte-order-marker
+
+      # Syntax of the data files.
+      - id: check-json
       - id: check-toml
       - id: check-yaml
+
+      # Things that should never reach a commit.
       - id: check-merge-conflict
-      - id: check-case-conflict
+      - id: detect-private-key
       - id: check-added-large-files
       - id: forbid-submodules
+
+      # Portability of the tree itself.
+      - id: check-case-conflict
+      - id: check-illegal-windows-names
+      - id: check-symlinks
+      - id: destroyed-symlinks
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
 
   - repo: https://github.com/crate-ci/typos
     rev: v1.51.1
     hooks:
       - id: typos
-        exclude: ^Cargo\.lock$
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        args: [--strict]
+
+  - repo: https://github.com/Mateusz-Grzelinski/actionlint-py
+    rev: v1.7.12.25
+    hooks:
+      - id: actionlint
+
+  - repo: https://github.com/AleksaC/hadolint-py
+    rev: v2.15.1
+    hooks:
+      - id: hadolint
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
 
   # Cargo lives outside pre-commit's isolated environments, so these are
   # `language: system` and run against the whole workspace rather than the
@@ -48,6 +96,14 @@ repos:
         types_or: [rust, toml]
         pass_filenames: false
 
+      # Broken intra-doc links and malformed doc comments fail the build.
+      - id: cargo-doc
+        name: cargo doc
+        entry: env RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --all-features --locked
+        language: system
+        types: [rust]
+        pass_filenames: false
+
       - id: cargo-test
         name: cargo test
         entry: cargo test --all-features --locked
@@ -55,3 +111,11 @@ repos:
         types_or: [rust, toml, sql]
         pass_filenames: false
         stages: [pre-push]
+
+      # Runs from the version pinned in package.json, so local and CI results
+      # cannot diverge. Needs `npm ci` once per clone.
+      - id: commitlint
+        name: commitlint
+        entry: npx --no -- commitlint --edit
+        language: system
+        stages: [commit-msg]
