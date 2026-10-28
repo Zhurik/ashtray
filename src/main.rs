@@ -3,9 +3,10 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use ashtray::config::{Config, LogConfig, LogFormat};
-use ashtray::{AppState, db, healthcheck, router, server};
+use ashtray::{AppState, db, healthcheck, metrics, router, server};
 use tokio::net::TcpListener;
 use tokio::signal;
+use tokio::sync::watch;
 use tracing_subscriber::EnvFilter;
 
 /// Exit code for a configuration that cannot be used, as opposed to a failure
@@ -79,6 +80,10 @@ async fn run() -> ExitCode {
 async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let pool = db::connect(&config.database_url, config.max_connections).await?;
     let listener = TcpListener::bind(config.bind_addr).await?;
+    let metrics_listener = match config.metrics.bind_addr {
+        Some(addr) => Some(TcpListener::bind(addr).await?),
+        None => None,
+    };
 
     let http = &config.http;
     tracing::info!(
@@ -92,11 +97,50 @@ async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         rate_limit_get = %display_rate(http.rate_limit.get),
         max_body_bytes = http.max_body_bytes,
         request_timeout = ?http.request_timeout,
+        metrics = %config
+            .metrics
+            .bind_addr
+            .map_or_else(|| "off".to_owned(), |addr| addr.to_string()),
         "ashtray is open"
     );
 
-    let app = router(AppState::new(pool.clone(), config.limits), http);
-    server::serve(listener, app, &config.server, shutdown_signal()).await;
+    let state = AppState::new(pool.clone(), config.limits);
+    let app = router(state.clone(), http);
+
+    // One signal stops both listeners.
+    let (stop, stopped) = watch::channel(false);
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        let _ = stop.send(true);
+    });
+    let until_stopped = |mut stopped: watch::Receiver<bool>| async move {
+        let _ = stopped.wait_for(|stop| *stop).await;
+    };
+
+    let api = server::serve(
+        listener,
+        app,
+        &config.server,
+        until_stopped(stopped.clone()),
+    );
+    let metrics = async {
+        if let Some(listener) = metrics_listener {
+            let token = config
+                .metrics
+                .token
+                .as_ref()
+                .map(|token| token.expose().into());
+            let app = metrics::router(state.clone(), token);
+            server::serve(
+                listener,
+                app,
+                &config.server,
+                until_stopped(stopped.clone()),
+            )
+            .await;
+        }
+    };
+    tokio::join!(api, metrics);
 
     // Checkpoints the WAL into the main file, so a backup of the volume taken
     // after a clean stop is a single self-contained file.

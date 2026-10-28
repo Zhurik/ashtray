@@ -180,6 +180,13 @@ or `120/min`, or `off`.
 | `ASHTRAY_DEFAULT_PER_PAGE` | `20` | Page size when the client does not ask for one |
 | `ASHTRAY_MAX_PER_PAGE` | `100` | Largest page size a client can ask for |
 
+**Metrics**
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `ASHTRAY_METRICS_BIND_ADDR` | *(empty: off)* | Address of the separate listener serving `/metrics`, e.g. `0.0.0.0:9090` |
+| `ASHTRAY_METRICS_TOKEN` | *(empty: no token)* | When set, `/metrics` wants `Authorization: Bearer <token>` |
+
 Settings that are valid but probably a mistake — a body limit too small for an
 entry at the character limits, for instance — are logged as warnings at startup
 and do not stop the process. The startup line itself lists the effective
@@ -187,6 +194,39 @@ settings.
 
 The binary also answers `ashtray healthcheck` (exit `0` when the server on
 `ASHTRAY_BIND_ADDR` answers `/health`), `ashtray version` and `ashtray help`.
+
+### Metrics
+
+`GET /metrics` answers in the OpenMetrics text format, on a listener of its
+own (`ASHTRAY_METRICS_BIND_ADDR`) so that the proxy in front of the API can
+never hand it to the internet. The API port does not serve it.
+
+| Metric | Type | Labels |
+| --- | --- | --- |
+| `http_requests_total` | counter | `method`, `route`, `status` |
+| `http_request_duration_seconds` | histogram | `method`, `route` |
+| `http_requests_in_flight` | gauge | |
+| `ashtray_entries_created_total` | counter | |
+| `ashtray_entries` | gauge — entries stored, counted at scrape time | |
+| `ashtray_rate_limited_requests_total` | counter | `method` |
+| `ashtray_database_up` | gauge — `1` if the database answered the scrape | |
+| `ashtray_db_connections`, `ashtray_db_connections_idle` | gauge | |
+| `ashtray_build_info` | info | `version` |
+| `process_start_time_seconds` | gauge | |
+| `process_cpu_seconds_total`, `process_resident_memory_bytes`, `process_virtual_memory_bytes`, `process_threads`, `process_open_fds`, `process_max_fds` | Linux only | |
+
+`route` is the route pattern, never the raw path: everything no route matches
+is `unmatched`, so scanners probing for `/wp-login.php` do not mint new series.
+Methods other than the usual ones are `other` for the same reason.
+
+```yaml
+scrape_configs:
+  - job_name: ashtray
+    authorization:
+      credentials: "<ASHTRAY_METRICS_TOKEN>"
+    static_configs:
+      - targets: ["ashtray:9090"]
+```
 
 ### Running it in production
 

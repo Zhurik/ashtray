@@ -39,6 +39,37 @@ pub struct Config {
     pub server: ServerConfig,
     pub http: HttpConfig,
     pub limits: EntryLimits,
+    pub metrics: MetricsConfig,
+}
+
+/// Where Prometheus scrapes from. A listener of its own, so the metrics are
+/// never reachable through the proxy that serves the API.
+#[derive(Debug, Clone, Default)]
+pub struct MetricsConfig {
+    /// `None` leaves the metrics listener off.
+    pub bind_addr: Option<SocketAddr>,
+    /// When set, `/metrics` wants `Authorization: Bearer <token>`.
+    pub token: Option<Secret>,
+}
+
+/// A value that must not end up in the log: `Debug` prints a placeholder.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Secret(String);
+
+impl Secret {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Secret(***)")
+    }
 }
 
 /// How the listener treats connections, as opposed to the requests on them.
@@ -334,6 +365,7 @@ impl Config {
         let server = Self::read_server(&mut reader);
         let http = Self::read_http(&mut reader);
         let limits = Self::read_limits(&mut reader);
+        let metrics = Self::read_metrics(&mut reader, bind_addr);
 
         reader.finish(Self {
             bind_addr,
@@ -342,7 +374,24 @@ impl Config {
             server,
             http,
             limits,
+            metrics,
         })
+    }
+
+    fn read_metrics(reader: &mut Reader<'_>, api_addr: SocketAddr) -> MetricsConfig {
+        let bind_addr = reader.read("ASHTRAY_METRICS_BIND_ADDR", None, |raw| {
+            let addr = parse::socket_addr(raw)?;
+            if addr == api_addr {
+                return Err(
+                    "is the same as ASHTRAY_BIND_ADDR; metrics need a port of their own".to_owned(),
+                );
+            }
+            Ok(Some(addr))
+        });
+        let token = reader.read("ASHTRAY_METRICS_TOKEN", None, |raw| {
+            Ok(Some(Secret::new(raw)))
+        });
+        MetricsConfig { bind_addr, token }
     }
 
     fn read_server(reader: &mut Reader<'_>) -> ServerConfig {
@@ -474,6 +523,14 @@ impl Config {
             ));
         }
 
+        if self.metrics.token.is_some() && self.metrics.bind_addr.is_none() {
+            warnings.push(
+                "ASHTRAY_METRICS_TOKEN is set but ASHTRAY_METRICS_BIND_ADDR is not, so there are \
+                 no metrics to protect"
+                    .to_owned(),
+            );
+        }
+
         warnings
     }
 }
@@ -511,6 +568,7 @@ mod tests {
         assert_eq!(config.http.rate_limit, RateLimitConfig::default());
         assert_eq!(config.http.max_body_bytes, 16 * 1024);
         assert_eq!(config.limits, EntryLimits::default());
+        assert!(config.metrics.bind_addr.is_none());
         assert!(config.warnings().is_empty());
     }
 
@@ -622,6 +680,31 @@ mod tests {
 
         assert_eq!(config.http.max_body_bytes, 1024);
         assert_eq!(config.warnings().len(), 1);
+    }
+
+    #[test]
+    fn metrics_need_a_port_of_their_own() {
+        let vars = rejected(&[
+            ("ASHTRAY_BIND_ADDR", "0.0.0.0:8080"),
+            ("ASHTRAY_METRICS_BIND_ADDR", "0.0.0.0:8080"),
+        ]);
+
+        assert_eq!(vars, ["ASHTRAY_METRICS_BIND_ADDR"]);
+    }
+
+    #[test]
+    fn the_metrics_token_stays_out_of_debug_output() {
+        let config = config(&[
+            ("ASHTRAY_METRICS_BIND_ADDR", "0.0.0.0:9090"),
+            ("ASHTRAY_METRICS_TOKEN", "hunter2-hunter2"),
+        ])
+        .expect("metrics");
+
+        assert_eq!(
+            config.metrics.token.as_ref().map(Secret::expose),
+            Some("hunter2-hunter2")
+        );
+        assert!(!format!("{config:?}").contains("hunter2"));
     }
 
     #[test]

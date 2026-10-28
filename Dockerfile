@@ -43,7 +43,8 @@ ENV ASHTRAY_BIND_ADDR=0.0.0.0:8080 \
 USER 10001:10001
 WORKDIR /data
 VOLUME ["/data"]
-EXPOSE 8080
+# 9090 is the metrics listener, off until ASHTRAY_METRICS_BIND_ADDR is set.
+EXPOSE 8080 9090
 
 # `healthcheck` reads ASHTRAY_BIND_ADDR like the server does, so it follows a
 # changed port, and exits 1 on any failure — the code Docker reads as

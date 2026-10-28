@@ -29,6 +29,7 @@ pub async fn create(
     .bind(&created_at)
     .fetch_one(&state.pool)
     .await?;
+    state.metrics.entry_created();
 
     Ok((StatusCode::CREATED, Json(stored)))
 }

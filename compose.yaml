@@ -41,6 +41,11 @@ services:
       ASHTRAY_DEFAULT_PER_PAGE: ${ASHTRAY_DEFAULT_PER_PAGE:-20}
       ASHTRAY_MAX_PER_PAGE: ${ASHTRAY_MAX_PER_PAGE:-100}
 
+      # Empty: no metrics listener. `0.0.0.0:9090` lets a Prometheus on the
+      # same Docker network scrape it; it is not published to the host.
+      ASHTRAY_METRICS_BIND_ADDR: ${ASHTRAY_METRICS_BIND_ADDR:-}
+      ASHTRAY_METRICS_TOKEN: ${ASHTRAY_METRICS_TOKEN:-}
+
       # No default: unset means no backtraces. Set to 1 or `full` to get them
       # on a panic.
       # RUST_BACKTRACE: ${RUST_BACKTRACE}

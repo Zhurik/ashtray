@@ -4,6 +4,7 @@ pub mod db;
 pub mod error;
 pub mod extract;
 pub mod healthcheck;
+pub mod metrics;
 pub mod middleware;
 pub mod models;
 pub mod rate_limit;
@@ -26,6 +27,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::config::HttpConfig;
+use crate::metrics::Metrics;
 use crate::middleware::REQUEST_ID;
 use crate::models::EntryLimits;
 use crate::rate_limit::RateLimits;
@@ -34,11 +36,17 @@ use crate::rate_limit::RateLimits;
 pub struct AppState {
     pub pool: SqlitePool,
     pub limits: EntryLimits,
+    pub metrics: Arc<Metrics>,
 }
 
 impl AppState {
     pub fn new(pool: SqlitePool, limits: EntryLimits) -> Self {
-        Self { pool, limits }
+        let metrics = Arc::new(Metrics::new(&pool));
+        Self {
+            pool,
+            limits,
+            metrics,
+        }
     }
 }
 
@@ -50,7 +58,8 @@ impl AppState {
 /// 1. a request id is assigned (or an incoming `x-request-id` kept) and
 ///    echoed back;
 /// 2. the client address is resolved, through trusted proxies if any;
-/// 3. the request is traced under a span carrying both;
+/// 3. the request is counted and timed for the metrics, and traced under a
+///    span carrying both;
 /// 4. security headers are set on the way out;
 /// 5. CORS answers preflights and stamps the response, errors included;
 /// 6. bodiless errors get the JSON shape the handlers use;
@@ -67,7 +76,7 @@ pub fn router(state: AppState, http: &HttpConfig) -> Router {
             post(routes::entries::create).get(routes::entries::list),
         )
         .route_layer(axum::middleware::from_fn_with_state(
-            RateLimits::new(&http.rate_limit),
+            RateLimits::new(&http.rate_limit, state.metrics.clone()),
             rate_limit::enforce,
         ));
 
@@ -77,6 +86,10 @@ pub fn router(state: AppState, http: &HttpConfig) -> Router {
         .layer(axum::middleware::from_fn_with_state(
             Arc::new(http.client_ip.clone()),
             client_ip::resolve,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.metrics.clone(),
+            metrics::track,
         ))
         .layer(
             TraceLayer::new_for_http()

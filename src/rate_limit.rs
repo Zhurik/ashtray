@@ -19,6 +19,7 @@ use governor::{DefaultKeyedRateLimiter, Quota};
 use crate::client_ip::ClientIp;
 use crate::config::{Rate, RateLimitConfig};
 use crate::error::ApiError;
+use crate::metrics::Metrics;
 
 /// How many checks pass between two sweeps of forgotten clients. The sweep
 /// walks the whole table, so it runs once per this many requests rather than
@@ -31,17 +32,19 @@ const SWEEP_EVERY: u64 = 4096;
 /// billions of them.
 const IPV6_PREFIX: u32 = 64;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct RateLimits {
     post: Option<Arc<Limiter>>,
     get: Option<Arc<Limiter>>,
+    metrics: Arc<Metrics>,
 }
 
 impl RateLimits {
-    pub fn new(config: &RateLimitConfig) -> Self {
+    pub fn new(config: &RateLimitConfig, metrics: Arc<Metrics>) -> Self {
         Self {
             post: config.post.map(Limiter::new).map(Arc::new),
             get: config.get.map(Limiter::new).map(Arc::new),
+            metrics,
         }
     }
 
@@ -101,6 +104,7 @@ pub async fn enforce(State(limits): State<RateLimits>, request: Request, next: N
         Ok(()) => next.run(request).await,
         Err(refusal) => {
             tracing::info!(client = %client, method = %request.method(), "rate limited");
+            limits.metrics.rate_limited(request.method());
             refusal.into_response()
         }
     }

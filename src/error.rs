@@ -126,6 +126,7 @@ fn retry_after_secs(wait: Duration) -> u64 {
 
 fn status_code(status: StatusCode) -> &'static str {
     match status {
+        StatusCode::UNAUTHORIZED => "unauthorized",
         StatusCode::NOT_FOUND => "not_found",
         StatusCode::METHOD_NOT_ALLOWED => "method_not_allowed",
         StatusCode::PAYLOAD_TOO_LARGE => "payload_too_large",
@@ -137,6 +138,7 @@ fn status_code(status: StatusCode) -> &'static str {
 
 fn status_message(status: StatusCode) -> String {
     match status {
+        StatusCode::UNAUTHORIZED => "This needs a valid token.".to_owned(),
         StatusCode::NOT_FOUND => "Nothing lives at this address.".to_owned(),
         StatusCode::METHOD_NOT_ALLOWED => "This address does not take that method.".to_owned(),
         StatusCode::PAYLOAD_TOO_LARGE => "The request is too large.".to_owned(),
