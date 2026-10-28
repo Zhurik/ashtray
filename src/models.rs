@@ -10,6 +10,29 @@ pub const MAX_BODY_CHARS: usize = 800;
 pub const DEFAULT_PER_PAGE: u32 = 20;
 pub const MAX_PER_PAGE: u32 = 100;
 
+/// How long each field may be and how large a page may get. The constants
+/// above are the defaults; the environment can move every one of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntryLimits {
+    pub author_chars: usize,
+    pub url_chars: usize,
+    pub body_chars: usize,
+    pub default_per_page: u32,
+    pub max_per_page: u32,
+}
+
+impl Default for EntryLimits {
+    fn default() -> Self {
+        Self {
+            author_chars: MAX_AUTHOR_CHARS,
+            url_chars: MAX_URL_CHARS,
+            body_chars: MAX_BODY_CHARS,
+            default_per_page: DEFAULT_PER_PAGE,
+            max_per_page: MAX_PER_PAGE,
+        }
+    }
+}
+
 /// One entry as it is stored and as it is handed back.
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct Entry {
@@ -39,26 +62,28 @@ pub struct ValidEntry {
 }
 
 impl NewEntry {
-    pub fn validate(self) -> Result<ValidEntry, ApiError> {
+    pub fn validate(self, limits: &EntryLimits) -> Result<ValidEntry, ApiError> {
         let author = optional(self.author);
         if let Some(author) = &author
-            && author.chars().count() > MAX_AUTHOR_CHARS
+            && author.chars().count() > limits.author_chars
         {
             return Err(ApiError::Invalid(format!(
-                "The name is longer than {MAX_AUTHOR_CHARS} characters."
+                "The name is longer than {} characters.",
+                limits.author_chars
             )));
         }
 
         let url = match optional(self.url) {
             None => None,
-            Some(url) => Some(validate_url(url)?),
+            Some(url) => Some(validate_url(url, limits.url_chars)?),
         };
 
         let body = optional(self.body)
             .ok_or_else(|| ApiError::Invalid("The message is empty.".to_owned()))?;
-        if body.chars().count() > MAX_BODY_CHARS {
+        if body.chars().count() > limits.body_chars {
             return Err(ApiError::Invalid(format!(
-                "The message is longer than {MAX_BODY_CHARS} characters."
+                "The message is longer than {} characters.",
+                limits.body_chars
             )));
         }
 
@@ -73,10 +98,10 @@ fn optional(value: impl Into<Option<String>>) -> Option<String> {
         .filter(|trimmed| !trimmed.is_empty())
 }
 
-fn validate_url(url: String) -> Result<String, ApiError> {
-    if url.chars().count() > MAX_URL_CHARS {
+fn validate_url(url: String, max_chars: usize) -> Result<String, ApiError> {
+    if url.chars().count() > max_chars {
         return Err(ApiError::Invalid(format!(
-            "The link is longer than {MAX_URL_CHARS} characters."
+            "The link is longer than {max_chars} characters."
         )));
     }
 
@@ -108,14 +133,14 @@ impl Pagination {
         self.page.unwrap_or(1).max(1)
     }
 
-    pub fn per_page(&self) -> u32 {
+    pub fn per_page(&self, limits: &EntryLimits) -> u32 {
         self.per_page
-            .unwrap_or(DEFAULT_PER_PAGE)
-            .clamp(1, MAX_PER_PAGE)
+            .unwrap_or(limits.default_per_page)
+            .clamp(1, limits.max_per_page)
     }
 
-    pub fn offset(&self) -> i64 {
-        i64::from(self.page() - 1) * i64::from(self.per_page())
+    pub fn offset(&self, limits: &EntryLimits) -> i64 {
+        i64::from(self.page() - 1) * i64::from(self.per_page(limits))
     }
 }
 

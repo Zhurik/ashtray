@@ -1,11 +1,11 @@
 use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use chrono::{SecondsFormat, Utc};
 
 use crate::AppState;
 use crate::error::ApiError;
-use crate::extract::ApiJson;
+use crate::extract::{ApiJson, ApiQuery};
 use crate::models::{Entry, EntryPage, NewEntry, Pagination};
 
 /// POST /api/entries — writes one entry and hands back what was stored.
@@ -13,7 +13,7 @@ pub async fn create(
     State(state): State<AppState>,
     ApiJson(payload): ApiJson<NewEntry>,
 ) -> Result<(StatusCode, Json<Entry>), ApiError> {
-    let entry = payload.validate()?;
+    let entry = payload.validate(&state.limits)?;
     // Second precision in UTC: fixed width, so the text column sorts
     // chronologically without any parsing.
     let created_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
@@ -36,9 +36,9 @@ pub async fn create(
 /// GET /api/entries — one page of entries, newest first.
 pub async fn list(
     State(state): State<AppState>,
-    Query(pagination): Query<Pagination>,
+    ApiQuery(pagination): ApiQuery<Pagination>,
 ) -> Result<Json<EntryPage>, ApiError> {
-    let per_page = pagination.per_page();
+    let per_page = pagination.per_page(&state.limits);
     let page = pagination.page();
 
     let total = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM entries")
@@ -52,7 +52,7 @@ pub async fn list(
          LIMIT ? OFFSET ?",
     )
     .bind(i64::from(per_page))
-    .bind(pagination.offset())
+    .bind(pagination.offset(&state.limits))
     .fetch_all(&state.pool)
     .await?;
 

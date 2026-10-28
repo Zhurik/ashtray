@@ -27,12 +27,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 # ---------- run ----------
 FROM debian:trixie-slim
 
-# curl is here for the health check and nothing else.
-# hadolint ignore=DL3008
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --home-dir /data --no-create-home ashtray \
+# Nothing to install: the health check is the binary's own `healthcheck`
+# command, so the runtime image is the base plus one file.
+RUN useradd --system --uid 10001 --home-dir /data --no-create-home ashtray \
     && install -d -o ashtray -g ashtray /data
 
 COPY --from=builder /usr/local/bin/ashtray /usr/local/bin/ashtray
@@ -48,10 +45,10 @@ WORKDIR /data
 VOLUME ["/data"]
 EXPOSE 8080
 
-# The shell form is deliberate: `|| exit 1` maps every curl failure to the one
-# exit code Docker reads as unhealthy.
-# hadolint ignore=DL3025
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8080/health || exit 1
+# `healthcheck` reads ASHTRAY_BIND_ADDR like the server does, so it follows a
+# changed port, and exits 1 on any failure — the code Docker reads as
+# unhealthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD ["/usr/local/bin/ashtray", "healthcheck"]
 
 ENTRYPOINT ["/usr/local/bin/ashtray"]
