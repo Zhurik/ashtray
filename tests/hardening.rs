@@ -210,6 +210,7 @@ async fn a_client_over_its_budget_is_told_when_to_come_back() {
 
     assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(reply.body["error"], "rate_limited");
+    assert_eq!(reply.body["reason"], "rate_limited");
     let retry_after: u64 = reply.headers[header::RETRY_AFTER]
         .to_str()
         .unwrap()
@@ -314,6 +315,7 @@ async fn a_body_over_the_size_limit_is_refused() {
 
     assert_eq!(reply.status, StatusCode::PAYLOAD_TOO_LARGE);
     assert_eq!(reply.body["error"], "payload_too_large");
+    assert_eq!(reply.body["reason"], "body_too_large");
 }
 
 #[tokio::test]
@@ -367,6 +369,7 @@ async fn an_unknown_address_is_a_json_404() {
 
     assert_eq!(reply.status, StatusCode::NOT_FOUND);
     assert_eq!(reply.body["error"], "not_found");
+    assert_eq!(reply.body["reason"], "not_found");
 }
 
 #[tokio::test]
@@ -383,6 +386,7 @@ async fn a_wrong_method_is_a_json_405_that_still_says_what_is_allowed() {
 
     assert_eq!(reply.status, StatusCode::METHOD_NOT_ALLOWED);
     assert_eq!(reply.body["error"], "method_not_allowed");
+    assert_eq!(reply.body["reason"], "method_not_allowed");
     let allow = reply.headers[header::ALLOW].to_str().unwrap();
     assert!(allow.contains("POST") && allow.contains("GET"), "{allow}");
 }
@@ -401,6 +405,7 @@ async fn a_malformed_query_is_a_json_400() {
 
     assert_eq!(reply.status, StatusCode::BAD_REQUEST);
     assert_eq!(reply.body["error"], "bad_request");
+    assert_eq!(reply.body["reason"], "malformed_query");
 }
 
 #[tokio::test]
@@ -417,6 +422,7 @@ async fn a_body_not_declared_as_json_is_a_json_415() {
 
     assert_eq!(reply.status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
     assert_eq!(reply.body["error"], "unsupported_media_type");
+    assert_eq!(reply.body["reason"], "unsupported_content_type");
 }
 
 #[tokio::test]
@@ -435,6 +441,7 @@ async fn a_slow_handler_is_cut_off_with_a_json_503() {
 
     assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(reply.body["error"], "timeout");
+    assert_eq!(reply.body["reason"], "timeout");
 }
 
 #[tokio::test]
@@ -447,6 +454,7 @@ async fn a_panicking_handler_is_a_json_500() {
 
     assert_eq!(reply.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(reply.body["error"], "internal_error");
+    assert_eq!(reply.body["reason"], "internal");
 }
 
 async fn on_fire() -> &'static str {

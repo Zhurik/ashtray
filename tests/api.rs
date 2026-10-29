@@ -175,15 +175,17 @@ async fn an_empty_message_is_refused() {
 
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"], "invalid_entry");
+    assert_eq!(body["reason"], "message_empty");
 }
 
 #[tokio::test]
 async fn a_message_over_the_limit_is_refused() {
     let app = app().await;
 
-    let (status, _) = post_entry(&app, json!({"body": "x".repeat(801)})).await;
+    let (status, body) = post_entry(&app, json!({"body": "x".repeat(801)})).await;
 
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["reason"], "message_too_long");
 }
 
 #[tokio::test]
@@ -199,10 +201,12 @@ async fn the_limits_count_characters_not_bytes() {
 async fn a_link_that_is_not_http_is_refused() {
     let app = app().await;
 
-    for url in [
-        "javascript:alert(1)",
-        "not a url",
-        "ftp://files.example.com",
+    // The reason separates "this is not a URL at all" from "this is a URL in a
+    // scheme the guestbook will not publish".
+    for (url, reason) in [
+        ("javascript:alert(1)", "link_not_http"),
+        ("not a url", "link_not_a_url"),
+        ("ftp://files.example.com", "link_not_http"),
     ] {
         let (status, body) = post_entry(&app, json!({"url": url, "body": "hi"})).await;
         assert_eq!(
@@ -211,7 +215,45 @@ async fn a_link_that_is_not_http_is_refused() {
             "{url} should be refused"
         );
         assert_eq!(body["error"], "invalid_entry");
+        assert_eq!(body["reason"], reason, "wrong reason for {url}");
     }
+}
+
+#[tokio::test]
+async fn a_name_over_the_limit_is_refused() {
+    let app = app().await;
+
+    let (status, body) = post_entry(&app, json!({"author": "x".repeat(41), "body": "hi"})).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["reason"], "name_too_long");
+}
+
+#[tokio::test]
+async fn a_link_over_the_limit_is_refused() {
+    let app = app().await;
+    let long = format!("https://example.com/{}", "x".repeat(200));
+
+    let (status, body) = post_entry(&app, json!({"url": long, "body": "hi"})).await;
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["reason"], "link_too_long");
+}
+
+#[tokio::test]
+async fn a_body_without_a_json_content_type_is_unsupported() {
+    let app = app().await;
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/entries")
+        .body(Body::from("name=marina&message=hi"))
+        .expect("request");
+
+    let (status, body) = send(&app, request).await;
+
+    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert_eq!(body["reason"], "unsupported_content_type");
 }
 
 #[tokio::test]
@@ -229,4 +271,5 @@ async fn a_body_that_is_not_json_gets_a_json_error_back() {
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"], "bad_request");
+    assert_eq!(body["reason"], "malformed_json");
 }

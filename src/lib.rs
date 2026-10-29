@@ -8,6 +8,7 @@ pub mod metrics;
 pub mod middleware;
 pub mod models;
 pub mod rate_limit;
+pub mod reason;
 pub mod routes;
 pub mod server;
 

@@ -52,8 +52,8 @@ curl -X POST http://127.0.0.1:8080/api/entries \
 Limits: author 40 characters, link 200 characters and `http`/`https` only,
 message 800 characters. Characters, not bytes, and each of them can be moved
 through the [environment](#configuration). Anything outside them comes back as
-`422` with `{"error": "invalid_entry", "message": "…"}`; a body that is not
-JSON comes back as `400` in the same shape.
+`422`, and a body that is not JSON as `400` or `415`, each with a `reason` that
+says which rule it broke — see [Errors](#errors).
 
 The entry is stored exactly as written. The page that shows it has to escape
 `author`, `url` and `body` as text — never insert them as HTML.
@@ -89,12 +89,20 @@ drown out the visitors.
 ### Errors
 
 Every error, from any endpoint or from the layers in front of them, has the
-same shape — the `error` code is stable and meant for code, the `message` is
-meant for people:
+same shape:
 
 ```json
-{"error": "rate_limited", "message": "Too many requests. Try again in 360 seconds."}
+{
+  "error": "invalid_entry",
+  "reason": "link_not_http",
+  "message": "The link has to be http or https."
+}
 ```
+
+`error` is the coarse class of the failure, `reason` the exact cause, and
+`message` English prose for whoever is reading the response by hand. A client
+that shows its own wording — in its own language — switches on `reason`; both
+`error` and `reason` are part of the API and do not change once published.
 
 | Status | `error` | When |
 | --- | --- | --- |
@@ -107,6 +115,27 @@ meant for people:
 | `429` | `rate_limited` | The client spent its budget; `Retry-After` says for how long, in seconds |
 | `500` | `internal_error` | The database failed or a handler panicked — the details are in the log only |
 | `503` | `timeout` | The request took longer than `ASHTRAY_REQUEST_TIMEOUT` |
+
+| `reason` | `error` | Status | What happened |
+| --- | --- | --- | --- |
+| `name_too_long` | `invalid_entry` | 422 | The name is over the author limit |
+| `link_too_long` | `invalid_entry` | 422 | The link is over the link limit |
+| `link_not_a_url` | `invalid_entry` | 422 | The link does not parse as a URL |
+| `link_not_http` | `invalid_entry` | 422 | The link parses, but is not `http` or `https` |
+| `message_empty` | `invalid_entry` | 422 | The message is missing, empty, or only spaces |
+| `message_too_long` | `invalid_entry` | 422 | The message is over the message limit |
+| `malformed_json` | `bad_request` | 400 | The body is not the JSON this endpoint expects |
+| `malformed_query` | `bad_request` | 400 | The query string does not parse |
+| `unreadable_body` | `bad_request` | 400 | The body never arrived in a readable state |
+| `unsupported_content_type` | `unsupported_media_type` | 415 | The request came without `Content-Type: application/json` |
+| `body_too_large` | `payload_too_large` | 413 | The body is over `ASHTRAY_MAX_BODY_SIZE` |
+| `unauthorized` | `unauthorized` | 401 | The endpoint needs a valid token |
+| `not_found` | `not_found` | 404 | Nothing is routed at that path |
+| `method_not_allowed` | `method_not_allowed` | 405 | Wrong method for that path |
+| `rate_limited` | `rate_limited` | 429 | The client spent its budget |
+| `timeout` | `timeout` | 503 | The request took too long |
+| `refused` | `bad_request` | 4xx | A layer refused the request for a reason none of the above covers |
+| `internal` | `internal_error` | 5xx | Something broke here; the cause is in the log, not the response |
 
 Every response carries an `x-request-id` header. An incoming one (from a proxy,
 say) is kept; otherwise a UUID is made up. The log line of the request carries
