@@ -1,3 +1,5 @@
+use ashtray::config::{HttpConfig, RateLimitConfig};
+use ashtray::models::EntryLimits;
 use ashtray::{AppState, db, router};
 use axum::Router;
 use axum::body::Body;
@@ -8,12 +10,17 @@ use tower::ServiceExt;
 
 /// A router over a private in-memory database. The pool is capped at one
 /// connection because every connection to `sqlite::memory:` would otherwise
-/// get a database of its own.
+/// get a database of its own. Rate limits are off: these tests are about
+/// entries, and `tests/hardening.rs` covers the limits.
 async fn app() -> Router {
     let pool = db::connect("sqlite::memory:", 1)
         .await
         .expect("in-memory database");
-    router(AppState { pool })
+    let http = HttpConfig {
+        rate_limit: RateLimitConfig::disabled(),
+        ..HttpConfig::default()
+    };
+    router(AppState::new(pool, EntryLimits::default()), &http)
 }
 
 async fn post_entry(app: &Router, payload: Value) -> (StatusCode, Value) {
