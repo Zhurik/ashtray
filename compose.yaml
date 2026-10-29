@@ -6,18 +6,54 @@ services:
       - "${ASHTRAY_PORT:-8080}:8080"
     # Every value below can be overridden from the shell or from a `.env` file
     # next to this one, e.g. `ASHTRAY_LOG=ashtray=debug docker compose up`.
+    # An empty value means the default, so the ones without a default here are
+    # simply off until set. The README explains each of them.
     environment:
-      # The container port is fixed by the image's health check, so change the
-      # published port through ASHTRAY_PORT rather than the bind address.
+      # Change the published port through ASHTRAY_PORT; the port inside the
+      # container can stay where it is.
       ASHTRAY_BIND_ADDR: ${ASHTRAY_BIND_ADDR:-0.0.0.0:8080}
       ASHTRAY_DATABASE_URL: ${ASHTRAY_DATABASE_URL:-sqlite:///data/ashtray.db}
       ASHTRAY_MAX_CONNECTIONS: ${ASHTRAY_MAX_CONNECTIONS:-5}
+
       ASHTRAY_LOG: ${ASHTRAY_LOG:-info}
+      ASHTRAY_LOG_FORMAT: ${ASHTRAY_LOG_FORMAT:-text}
+
+      # Empty: CORS off. `https://example.com`, a comma-separated list, or `*`.
+      ASHTRAY_CORS_ALLOWED_ORIGINS: ${ASHTRAY_CORS_ALLOWED_ORIGINS:-}
+      ASHTRAY_CORS_MAX_AGE: ${ASHTRAY_CORS_MAX_AGE:-10m}
+
+      # Empty: nobody's forwarding header is believed. Behind a reverse proxy
+      # on the same Docker network, `private` is usually what you want.
+      ASHTRAY_TRUSTED_PROXIES: ${ASHTRAY_TRUSTED_PROXIES:-}
+      ASHTRAY_CLIENT_IP_HEADER: ${ASHTRAY_CLIENT_IP_HEADER:-x-forwarded-for}
+
+      ASHTRAY_RATE_LIMIT_POST: ${ASHTRAY_RATE_LIMIT_POST:-10/1h}
+      ASHTRAY_RATE_LIMIT_GET: ${ASHTRAY_RATE_LIMIT_GET:-120/1m}
+
+      ASHTRAY_MAX_BODY_SIZE: ${ASHTRAY_MAX_BODY_SIZE:-16KiB}
+      ASHTRAY_REQUEST_TIMEOUT: ${ASHTRAY_REQUEST_TIMEOUT:-10s}
+      ASHTRAY_HEADER_READ_TIMEOUT: ${ASHTRAY_HEADER_READ_TIMEOUT:-10s}
+      ASHTRAY_SHUTDOWN_TIMEOUT: ${ASHTRAY_SHUTDOWN_TIMEOUT:-8s}
+
+      ASHTRAY_MAX_AUTHOR_CHARS: ${ASHTRAY_MAX_AUTHOR_CHARS:-40}
+      ASHTRAY_MAX_URL_CHARS: ${ASHTRAY_MAX_URL_CHARS:-200}
+      ASHTRAY_MAX_BODY_CHARS: ${ASHTRAY_MAX_BODY_CHARS:-800}
+      ASHTRAY_DEFAULT_PER_PAGE: ${ASHTRAY_DEFAULT_PER_PAGE:-20}
+      ASHTRAY_MAX_PER_PAGE: ${ASHTRAY_MAX_PER_PAGE:-100}
+
+      # Empty: no metrics listener. `0.0.0.0:9090` lets a Prometheus on the
+      # same Docker network scrape it; it is not published to the host.
+      ASHTRAY_METRICS_BIND_ADDR: ${ASHTRAY_METRICS_BIND_ADDR:-}
+      ASHTRAY_METRICS_TOKEN: ${ASHTRAY_METRICS_TOKEN:-}
+
       # No default: unset means no backtraces. Set to 1 or `full` to get them
       # on a panic.
       # RUST_BACKTRACE: ${RUST_BACKTRACE}
     volumes:
       - ashtray-data:/data
+    # Longer than ASHTRAY_SHUTDOWN_TIMEOUT, so the process stops on its own
+    # rather than being killed while it drains.
+    stop_grace_period: 10s
     restart: unless-stopped
 
 volumes:
