@@ -42,6 +42,9 @@ pub struct Entry {
     pub url: Option<String>,
     pub body: String,
     pub created_at: String,
+    /// `true` while the entry is held back from the list, waiting for someone
+    /// to let it through by hand.
+    pub waitlisted: bool,
 }
 
 /// What a visitor sends. Everything but the body is optional.

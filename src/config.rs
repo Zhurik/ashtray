@@ -40,6 +40,20 @@ pub struct Config {
     pub http: HttpConfig,
     pub limits: EntryLimits,
     pub metrics: MetricsConfig,
+    /// Whether new entries are held back from the list until someone lets
+    /// them through in the database.
+    pub waitlist: bool,
+    pub ntfy: NtfyConfig,
+}
+
+/// Where new entries are announced.
+#[derive(Debug, Clone, Default)]
+pub struct NtfyConfig {
+    /// The topic to publish to, server and all: `https://ntfy.sh/my-topic`.
+    /// `None` leaves notifications off.
+    pub url: Option<url::Url>,
+    /// When set, sent as `Authorization: Bearer <token>`.
+    pub token: Option<Secret>,
 }
 
 /// Where Prometheus scrapes from. A listener of its own, so the metrics are
@@ -366,6 +380,8 @@ impl Config {
         let http = Self::read_http(&mut reader);
         let limits = Self::read_limits(&mut reader);
         let metrics = Self::read_metrics(&mut reader, bind_addr);
+        let waitlist = reader.read("ASHTRAY_WAITLIST", false, parse::boolean);
+        let ntfy = Self::read_ntfy(&mut reader);
 
         reader.finish(Self {
             bind_addr,
@@ -375,7 +391,19 @@ impl Config {
             http,
             limits,
             metrics,
+            waitlist,
+            ntfy,
         })
+    }
+
+    fn read_ntfy(reader: &mut Reader<'_>) -> NtfyConfig {
+        let url = reader.read("ASHTRAY_NTFY_URL", None, |raw| {
+            parse::ntfy_url(raw).map(Some)
+        });
+        let token = reader.read("ASHTRAY_NTFY_TOKEN", None, |raw| {
+            parse::bearer_token(raw).map(|token| Some(Secret::new(token)))
+        });
+        NtfyConfig { url, token }
     }
 
     fn read_metrics(reader: &mut Reader<'_>, api_addr: SocketAddr) -> MetricsConfig {
@@ -527,6 +555,13 @@ impl Config {
             warnings.push(
                 "ASHTRAY_METRICS_TOKEN is set but ASHTRAY_METRICS_BIND_ADDR is not, so there are \
                  no metrics to protect"
+                    .to_owned(),
+            );
+        }
+
+        if self.ntfy.token.is_some() && self.ntfy.url.is_none() {
+            warnings.push(
+                "ASHTRAY_NTFY_TOKEN is set but ASHTRAY_NTFY_URL is not, so nothing is sent"
                     .to_owned(),
             );
         }
@@ -705,6 +740,42 @@ mod tests {
             Some("hunter2-hunter2")
         );
         assert!(!format!("{config:?}").contains("hunter2"));
+    }
+
+    #[test]
+    fn the_waitlist_and_ntfy_are_off_by_default() {
+        let config = config(&[]).expect("defaults");
+
+        assert!(!config.waitlist);
+        assert!(config.ntfy.url.is_none());
+    }
+
+    #[test]
+    fn ntfy_takes_a_topic_url_and_a_secret_token() {
+        let config = config(&[
+            ("ASHTRAY_WAITLIST", "true"),
+            ("ASHTRAY_NTFY_URL", "https://ntfy.example.com/guestbook"),
+            ("ASHTRAY_NTFY_TOKEN", "tk_hunter2"),
+        ])
+        .expect("ntfy");
+
+        assert!(config.waitlist);
+        assert_eq!(
+            config.ntfy.url.as_ref().map(url::Url::as_str),
+            Some("https://ntfy.example.com/guestbook")
+        );
+        assert_eq!(
+            config.ntfy.token.as_ref().map(Secret::expose),
+            Some("tk_hunter2")
+        );
+        assert!(!format!("{config:?}").contains("hunter2"));
+    }
+
+    #[test]
+    fn an_ntfy_token_without_a_url_is_a_warning() {
+        let config = config(&[("ASHTRAY_NTFY_TOKEN", "tk_hunter2")]).expect("valid");
+
+        assert_eq!(config.warnings().len(), 1);
     }
 
     #[test]

@@ -8,7 +8,8 @@ use crate::error::ApiError;
 use crate::extract::{ApiJson, ApiQuery};
 use crate::models::{Entry, EntryPage, NewEntry, Pagination};
 
-/// POST /api/entries — writes one entry and hands back what was stored.
+/// POST /api/entries — writes one entry and hands back what was stored. With
+/// the waitlist on, the entry is stored hidden and says so in `waitlisted`.
 pub async fn create(
     State(state): State<AppState>,
     ApiJson(payload): ApiJson<NewEntry>,
@@ -19,22 +20,27 @@ pub async fn create(
     let created_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
 
     let stored = sqlx::query_as::<_, Entry>(
-        "INSERT INTO entries (author, url, body, created_at)
-         VALUES (?, ?, ?, ?)
-         RETURNING id, author, url, body, created_at",
+        "INSERT INTO entries (author, url, body, created_at, waitlisted)
+         VALUES (?, ?, ?, ?, ?)
+         RETURNING id, author, url, body, created_at, waitlisted",
     )
     .bind(&entry.author)
     .bind(&entry.url)
     .bind(&entry.body)
     .bind(&created_at)
+    .bind(state.waitlist)
     .fetch_one(&state.pool)
     .await?;
     state.metrics.entry_created();
+    if let Some(notifier) = &state.notifier {
+        notifier.entry_created(&stored);
+    }
 
     Ok((StatusCode::CREATED, Json(stored)))
 }
 
-/// GET /api/entries — one page of entries, newest first.
+/// GET /api/entries — one page of entries, newest first. Waitlisted entries
+/// are left out, of the count as well as of the page.
 pub async fn list(
     State(state): State<AppState>,
     ApiQuery(pagination): ApiQuery<Pagination>,
@@ -42,13 +48,14 @@ pub async fn list(
     let per_page = pagination.per_page(&state.limits);
     let page = pagination.page();
 
-    let total = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM entries")
+    let total = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM entries WHERE waitlisted = 0")
         .fetch_one(&state.pool)
         .await?;
 
     let items = sqlx::query_as::<_, Entry>(
-        "SELECT id, author, url, body, created_at
+        "SELECT id, author, url, body, created_at, waitlisted
          FROM entries
+         WHERE waitlisted = 0
          ORDER BY created_at DESC, id DESC
          LIMIT ? OFFSET ?",
     )
