@@ -6,30 +6,28 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
+use crate::reason::Reason;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
     /// The request was understood but the data in it is not acceptable.
-    #[error("{0}")]
-    Invalid(String),
+    #[error("{}", .0.message())]
+    Invalid(Reason),
     /// The request body or query string was not what this endpoint expects.
-    #[error("{0}")]
-    BadRequest(String),
-    /// An extractor refused the request with a status of its own, such as
-    /// `415` for a body that is not declared as JSON.
-    #[error("{message}")]
-    Rejected { status: StatusCode, message: String },
+    #[error("{}", .0.message())]
+    BadRequest(Reason),
     /// The client spent its budget for this endpoint.
-    #[error("Too many requests. Try again in {} seconds.", retry_after_secs(*.retry_after))]
+    #[error("{}", self.reason().message())]
     RateLimited { retry_after: Duration },
     /// The handler did not answer within the request timeout.
-    #[error("The ashtray took too long to answer. Try again.")]
+    #[error("{}", Reason::Timeout.message())]
     Timeout,
     /// The handler panicked. The panic itself is in the log.
-    #[error("Something broke inside the ashtray. Try again.")]
+    #[error("{}", Reason::Internal.message())]
     Panic,
     /// A bare status from somewhere that had no body to go with it — the
     /// router's own `404` and `405`, or a layer that refused the request.
-    #[error("{}", status_message(*.0))]
+    #[error("{}", self.reason().message())]
     Status(StatusCode),
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
@@ -37,7 +35,11 @@ pub enum ApiError {
 
 #[derive(Serialize)]
 struct ErrorBody<'a> {
+    /// The class of failure, such as `invalid_entry` or `rate_limited`.
     error: &'a str,
+    /// The specific cause, for a client that maps it to its own wording.
+    reason: Reason,
+    /// English prose for a human reading this by hand.
     message: String,
 }
 
@@ -45,23 +47,37 @@ impl ApiError {
     pub fn status(&self) -> StatusCode {
         match self {
             Self::Invalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            // A missing content type is the one body problem that is not a
+            // bad request but an unsupported one.
+            Self::BadRequest(Reason::UnsupportedContentType) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
-            Self::Rejected { status, .. } | Self::Status(status) => *status,
+            Self::Status(status) => *status,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::Timeout => StatusCode::SERVICE_UNAVAILABLE,
             Self::Panic | Self::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
-    /// The machine-readable half of the body. Stable: clients branch on it.
+    /// The machine-readable class of the failure. Stable: clients branch on it.
     fn code(&self) -> &'static str {
         match self {
             Self::Invalid(_) => "invalid_entry",
-            Self::BadRequest(_) => "bad_request",
+            Self::BadRequest(_) | Self::Status(_) => status_code(self.status()),
             Self::RateLimited { .. } => "rate_limited",
             Self::Timeout => "timeout",
             Self::Panic | Self::Database(_) => "internal_error",
-            Self::Rejected { status, .. } | Self::Status(status) => status_code(*status),
+        }
+    }
+
+    pub fn reason(&self) -> Reason {
+        match self {
+            Self::Invalid(reason) | Self::BadRequest(reason) => *reason,
+            Self::RateLimited { retry_after } => Reason::RateLimited {
+                retry_after_secs: retry_after_secs(*retry_after),
+            },
+            Self::Timeout => Reason::Timeout,
+            Self::Panic | Self::Database(_) => Reason::Internal,
+            Self::Status(status) => status_reason(*status),
         }
     }
 }
@@ -74,14 +90,13 @@ impl IntoResponse for ApiError {
             tracing::error!(%cause, "request failed on the database");
         }
 
-        let status = self.status();
-        let error = self.code();
-        let message = match &self {
-            Self::Database(_) => "The ashtray could not be reached. Try again.".to_owned(),
-            other => other.to_string(),
+        let reason = self.reason();
+        let body = ErrorBody {
+            error: self.code(),
+            reason,
+            message: reason.message(),
         };
-
-        let mut response = (status, Json(ErrorBody { error, message })).into_response();
+        let mut response = (self.status(), Json(body)).into_response();
 
         if let Self::RateLimited { retry_after } = self {
             response.headers_mut().insert(
@@ -96,24 +111,28 @@ impl IntoResponse for ApiError {
 
 impl From<JsonRejection> for ApiError {
     fn from(rejection: JsonRejection) -> Self {
-        match rejection.status() {
+        match rejection {
+            JsonRejection::MissingJsonContentType(_) => {
+                Self::BadRequest(Reason::UnsupportedContentType)
+            }
+            JsonRejection::JsonSyntaxError(_) | JsonRejection::JsonDataError(_) => {
+                Self::BadRequest(Reason::MalformedJson)
+            }
             // The body limit trips inside the JSON extractor; its own message
             // talks about buffers, which means nothing to a visitor.
-            StatusCode::PAYLOAD_TOO_LARGE => Self::Status(StatusCode::PAYLOAD_TOO_LARGE),
-            StatusCode::UNSUPPORTED_MEDIA_TYPE => Self::Rejected {
-                status: StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                message: rejection.body_text(),
-            },
-            // Broken syntax and the wrong fields alike: the client sent
-            // something this endpoint cannot read.
-            _ => Self::BadRequest(rejection.body_text()),
+            rejection if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+                Self::Status(StatusCode::PAYLOAD_TOO_LARGE)
+            }
+            // The rejection is non-exhaustive; anything else means the body
+            // never arrived in a readable state.
+            _ => Self::BadRequest(Reason::UnreadableBody),
         }
     }
 }
 
 impl From<QueryRejection> for ApiError {
-    fn from(rejection: QueryRejection) -> Self {
-        Self::BadRequest(rejection.body_text())
+    fn from(_: QueryRejection) -> Self {
+        Self::BadRequest(Reason::MalformedQuery)
     }
 }
 
@@ -136,13 +155,14 @@ fn status_code(status: StatusCode) -> &'static str {
     }
 }
 
-fn status_message(status: StatusCode) -> String {
+fn status_reason(status: StatusCode) -> Reason {
     match status {
-        StatusCode::UNAUTHORIZED => "This needs a valid token.".to_owned(),
-        StatusCode::NOT_FOUND => "Nothing lives at this address.".to_owned(),
-        StatusCode::METHOD_NOT_ALLOWED => "This address does not take that method.".to_owned(),
-        StatusCode::PAYLOAD_TOO_LARGE => "The request is too large.".to_owned(),
-        other => format!("{}.", other.canonical_reason().unwrap_or("Request failed")),
+        StatusCode::UNAUTHORIZED => Reason::Unauthorized,
+        StatusCode::NOT_FOUND => Reason::NotFound,
+        StatusCode::METHOD_NOT_ALLOWED => Reason::MethodNotAllowed,
+        StatusCode::PAYLOAD_TOO_LARGE => Reason::BodyTooLarge,
+        status if status.is_server_error() => Reason::Internal,
+        other => Reason::Refused(other),
     }
 }
 
