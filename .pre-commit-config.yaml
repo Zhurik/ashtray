@@ -11,13 +11,12 @@ minimum_pre_commit_version: "4.0.0"
 default_install_hook_types: [pre-commit, pre-merge-commit, commit-msg, pre-push]
 default_stages: [pre-commit, pre-merge-commit]
 
-# Generated files: the lockfiles belong to their package managers and the
-# changelog to semantic-release, so no hook may rewrite them.
+# Generated files: the lockfiles belong to their package managers, so no hook
+# may rewrite them.
 exclude: |
   (?x)^(
     Cargo\.lock|
-    package-lock\.json|
-    CHANGELOG\.md
+    package-lock\.json
   )$
 
 repos:

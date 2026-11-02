@@ -381,9 +381,10 @@ and a `docker build`.
 A green `CI` on `main` triggers `Release`, which runs
 [semantic-release](https://github.com/semantic-release/semantic-release). It
 reads the Conventional Commits since the last tag, picks the next version,
-writes it into `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md`, builds and pushes
+stamps it into the build (not into the repository — the release never commits
+to `main`, so `Cargo.toml` there does not carry the released version), pushes
 a `linux/amd64` + `linux/arm64` image to `zhurik.cr.cloud.ru/ashtray` tagged `latest`, `X.Y.Z`, `X.Y` and `X`,
-and publishes a GitHub release. `fix:` makes a patch, `feat:` a minor,
+tags the commit and publishes a GitHub release with the notes. `fix:` makes a patch, `feat:` a minor,
 `BREAKING CHANGE:` a major; `chore:`, `docs:` and the rest release nothing.
 
 The registry is configured in the repository settings, not in the code:

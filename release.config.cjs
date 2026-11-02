@@ -13,11 +13,13 @@ module.exports = {
   plugins: [
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
-    "@semantic-release/changelog",
     [
-      // The crate version is the one the binary reports, so it follows the
-      // release. `cargo metadata` rewrites the crate's own entry in Cargo.lock
-      // without touching any dependency.
+      // The crate version is the one the binary reports, so the image is built
+      // with the release's. The bump stays on the runner: the main ruleset only
+      // takes pull requests, so the release never commits back, and the
+      // version in the repository is not the released one. `cargo metadata`
+      // rewrites the crate's own entry in Cargo.lock without touching any
+      // dependency.
       "@semantic-release/exec",
       {
         prepareCmd:
@@ -32,12 +34,6 @@ module.exports = {
         dockerImage: "ashtray",
         dockerTags: ["latest", "{{version}}", "{{major}}", "{{major}}.{{minor}}"],
         dockerPlatform: ["linux/amd64", "linux/arm64"],
-      },
-    ],
-    [
-      "@semantic-release/git",
-      {
-        assets: ["CHANGELOG.md", "Cargo.toml", "Cargo.lock"],
       },
     ],
     "@semantic-release/github",
