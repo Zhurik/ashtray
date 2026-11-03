@@ -3,6 +3,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use ashtray::config::{Config, LogConfig, LogFormat};
+use ashtray::notify::Notifier;
 use ashtray::{AppState, db, healthcheck, metrics, router, server};
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -78,6 +79,7 @@ async fn run() -> ExitCode {
 }
 
 async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
+    let notifier = Notifier::new(&config.ntfy)?;
     let pool = db::connect(&config.database_url, config.max_connections).await?;
     let listener = TcpListener::bind(config.bind_addr).await?;
     let metrics_listener = match config.metrics.bind_addr {
@@ -101,10 +103,21 @@ async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             .metrics
             .bind_addr
             .map_or_else(|| "off".to_owned(), |addr| addr.to_string()),
+        waitlist = config.waitlist,
+        // The host only: on a public server the topic name is the password.
+        ntfy = %config
+            .ntfy
+            .url
+            .as_ref()
+            .and_then(|url| url.host_str())
+            .unwrap_or("off"),
         "ashtray is open"
     );
 
-    let state = AppState::new(pool.clone(), config.limits);
+    let mut state = AppState::new(pool.clone(), config.limits).with_waitlist(config.waitlist);
+    if let Some(notifier) = notifier {
+        state = state.with_notifier(notifier);
+    }
     let app = router(state.clone(), http);
 
     // One signal stops both listeners.

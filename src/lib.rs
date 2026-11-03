@@ -7,6 +7,7 @@ pub mod healthcheck;
 pub mod metrics;
 pub mod middleware;
 pub mod models;
+pub mod notify;
 pub mod rate_limit;
 pub mod reason;
 pub mod routes;
@@ -31,6 +32,7 @@ use crate::config::HttpConfig;
 use crate::metrics::Metrics;
 use crate::middleware::REQUEST_ID;
 use crate::models::EntryLimits;
+use crate::notify::Notifier;
 use crate::rate_limit::RateLimits;
 
 #[derive(Clone)]
@@ -38,6 +40,10 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub limits: EntryLimits,
     pub metrics: Arc<Metrics>,
+    /// Whether new entries are held back from the list until let through.
+    pub waitlist: bool,
+    /// Where new entries are announced, if anywhere.
+    pub notifier: Option<Notifier>,
 }
 
 impl AppState {
@@ -47,7 +53,21 @@ impl AppState {
             pool,
             limits,
             metrics,
+            waitlist: false,
+            notifier: None,
         }
+    }
+
+    /// Holds every new entry back from the list until it is let through.
+    pub fn with_waitlist(mut self, waitlist: bool) -> Self {
+        self.waitlist = waitlist;
+        self
+    }
+
+    /// Announces every new entry through `notifier`.
+    pub fn with_notifier(mut self, notifier: Notifier) -> Self {
+        self.notifier = Some(notifier);
+        self
     }
 }
 

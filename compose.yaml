@@ -46,6 +46,13 @@ services:
       ASHTRAY_METRICS_BIND_ADDR: ${ASHTRAY_METRICS_BIND_ADDR:-}
       ASHTRAY_METRICS_TOKEN: ${ASHTRAY_METRICS_TOKEN:-}
 
+      # `true` hides every new entry until it is let through in the database.
+      ASHTRAY_WAITLIST: ${ASHTRAY_WAITLIST:-false}
+      # Empty: no notifications. `https://ntfy.sh/my-topic` or a server of
+      # your own; the token is for topics that need a login.
+      ASHTRAY_NTFY_URL: ${ASHTRAY_NTFY_URL:-}
+      ASHTRAY_NTFY_TOKEN: ${ASHTRAY_NTFY_TOKEN:-}
+
       # No default: unset means no backtraces. Set to 1 or `full` to get them
       # on a panic.
       # RUST_BACKTRACE: ${RUST_BACKTRACE}

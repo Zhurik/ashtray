@@ -45,9 +45,14 @@ curl -X POST http://127.0.0.1:8080/api/entries \
   "author": "marina",
   "url": "https://marina.dev",
   "body": "Hello from the webring.",
-  "created_at": "2026-10-27T09:12:00Z"
+  "created_at": "2026-10-27T09:12:00Z",
+  "waitlisted": false
 }
 ```
+
+`waitlisted` is `true` when the [waitlist](#waitlist) is on: the entry is
+stored, but stays out of the list until it is let through, so the page can
+tell its author to come back later.
 
 Limits: author 40 characters, link 200 characters and `http`/`https` only,
 message 800 characters. Characters, not bytes, and each of them can be moved
@@ -60,7 +65,8 @@ The entry is stored exactly as written. The page that shows it has to escape
 
 ### `GET /api/entries`
 
-One page of entries, newest first. `page` starts at 1, `per_page` defaults to
+One page of entries, newest first, waitlisted ones left out — of `total` as
+well. `page` starts at 1, `per_page` defaults to
 20 and is capped at 100 (`ASHTRAY_DEFAULT_PER_PAGE`, `ASHTRAY_MAX_PER_PAGE`). Both are clamped rather than rejected, so walking off
 the end of the list returns an empty page, not an error.
 
@@ -209,6 +215,14 @@ or `120/min`, or `off`.
 | `ASHTRAY_DEFAULT_PER_PAGE` | `20` | Page size when the client does not ask for one |
 | `ASHTRAY_MAX_PER_PAGE` | `100` | Largest page size a client can ask for |
 
+**Waitlist and notifications**
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `ASHTRAY_WAITLIST` | `false` | `true` holds every new entry back from the list until it is let through — see [Waitlist](#waitlist) |
+| `ASHTRAY_NTFY_URL` | *(empty: off)* | ntfy topic to announce every new entry on, server and topic together: `https://ntfy.sh/my-topic` |
+| `ASHTRAY_NTFY_TOKEN` | *(empty: no token)* | When set, sent to ntfy as `Authorization: Bearer <token>` |
+
 **Metrics**
 
 | Variable | Default | What it does |
@@ -223,6 +237,35 @@ settings.
 
 The binary also answers `ashtray healthcheck` (exit `0` when the server on
 `ASHTRAY_BIND_ADDR` answers `/health`), `ashtray version` and `ashtray help`.
+
+### Waitlist
+
+With `ASHTRAY_WAITLIST=true`, every new entry is stored with `waitlisted = 1`
+and the list does not show it. There is no admin panel yet: letting an entry
+through is one statement against the database.
+
+```sh
+sqlite3 /path/to/volume/ashtray.db "UPDATE entries SET waitlisted = 0 WHERE id = 42;"
+```
+
+Deleting it instead is `DELETE FROM entries WHERE id = 42;`. Entries written
+before the waitlist was switched on, or while it was off, are shown and stay
+shown; switching it off later does not let the waiting ones through.
+
+### Notifications
+
+With `ASHTRAY_NTFY_URL` set, every new entry is published to that
+[ntfy](https://ntfy.sh) topic: the author in the title, the message and link in
+the body, and for a waitlisted entry the `UPDATE` that lets it through. It
+works with ntfy.sh and with a server of your own; for a topic that needs a
+login, create an access token (`ntfy token add <user>`) and put it in
+`ASHTRAY_NTFY_TOKEN`.
+
+The notification is sent after the entry is stored and the visitor has their
+answer, so a slow or unreachable ntfy never fails or slows down a write. A
+failed notification is logged as a warning and not retried. On ntfy.sh anyone
+who knows the topic name can read it, so pick one nobody will guess; the
+startup log names only the host.
 
 ### Metrics
 
@@ -427,8 +470,9 @@ The registry is configured in the repository settings, not in the code:
 
 ## What it deliberately does not do yet
 
-- **No moderation.** Every entry is public the moment it is written. A
-  `published` flag and a way to flip it is the obvious next step.
+- **No moderation tools.** The [waitlist](#waitlist) can hold entries back,
+  but letting one through is an `UPDATE` by hand. An endpoint for it is the
+  obvious next step.
 - **Only a rate limit against spam.** No honeypot, no captcha, no link
   filter. The limit slows a spammer down to `ASHTRAY_RATE_LIMIT_POST` per
   address; one with many addresses still gets through.

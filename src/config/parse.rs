@@ -162,6 +162,42 @@ pub fn header_name(raw: &str) -> Result<HeaderName, String> {
     HeaderName::from_str(raw).map_err(|_| "is not a valid header name".to_owned())
 }
 
+/// `true`/`false`, and the usual spellings of each: `1`/`0`, `yes`/`no`,
+/// `on`/`off`.
+pub fn boolean(raw: &str) -> Result<bool, String> {
+    match raw.to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        _ => Err("has to be `true` or `false`".to_owned()),
+    }
+}
+
+/// A topic URL: an http or https server and the topic as the path,
+/// `https://ntfy.sh/my-topic`.
+pub fn ntfy_url(raw: &str) -> Result<url::Url, String> {
+    let url = url::Url::parse(raw)
+        .map_err(|_| "is not a URL like `https://ntfy.sh/my-topic`".to_owned())?;
+
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("has to be http or https".to_owned());
+    }
+    if url.path().trim_matches('/').is_empty() {
+        return Err("has no topic; add it as the path, e.g. `https://ntfy.sh/my-topic`".to_owned());
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err("has a query or a fragment; only the topic URL goes here".to_owned());
+    }
+
+    Ok(url)
+}
+
+/// Anything that fits in an `Authorization: Bearer …` header.
+pub fn bearer_token(raw: &str) -> Result<String, String> {
+    HeaderValue::from_str(&format!("Bearer {raw}"))
+        .map(|_| raw.to_owned())
+        .map_err(|_| "cannot be sent in a header".to_owned())
+}
+
 pub fn log_filter(raw: &str) -> Result<String, String> {
     EnvFilter::try_new(raw)
         .map(|_| raw.to_owned())
@@ -238,6 +274,25 @@ mod tests {
                 "https://example.com"
             )]))
         );
+    }
+
+    #[test]
+    fn booleans_take_the_usual_spellings() {
+        assert_eq!(boolean("true"), Ok(true));
+        assert_eq!(boolean("ON"), Ok(true));
+        assert_eq!(boolean("1"), Ok(true));
+        assert_eq!(boolean("no"), Ok(false));
+        assert!(boolean("maybe").is_err());
+    }
+
+    #[test]
+    fn an_ntfy_url_needs_a_topic() {
+        assert!(ntfy_url("https://ntfy.sh/guestbook").is_ok());
+        assert!(ntfy_url("http://ntfy.internal:8080/guestbook").is_ok());
+        assert!(ntfy_url("https://ntfy.sh").is_err());
+        assert!(ntfy_url("https://ntfy.sh/").is_err());
+        assert!(ntfy_url("ntfy.sh/guestbook").is_err());
+        assert!(ntfy_url("https://ntfy.sh/guestbook?title=x").is_err());
     }
 
     #[test]
