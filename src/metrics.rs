@@ -282,7 +282,9 @@ async fn authorize(State(token): State<Arc<str>>, request: Request, next: Next) 
         .and_then(|value| value.strip_prefix("Bearer "));
 
     match presented {
-        Some(presented) if constant_time_eq(presented.as_bytes(), token.as_bytes()) => {
+        Some(presented)
+            if crate::admin::constant_time_eq(presented.as_bytes(), token.as_bytes()) =>
+        {
             next.run(request).await
         }
         _ => {
@@ -293,12 +295,6 @@ async fn authorize(State(token): State<Arc<str>>, request: Request, next: Next) 
             response
         }
     }
-}
-
-/// Compares without stopping at the first difference, so the time taken does
-/// not tell an attacker how much of the token they already have right.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0, |diff, (x, y)| diff | (x ^ y)) == 0
 }
 
 /// The connection pool, read at scrape time.
@@ -521,13 +517,6 @@ mod proc {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tokens_compare_whole() {
-        assert!(constant_time_eq(b"secret", b"secret"));
-        assert!(!constant_time_eq(b"secret", b"secreT"));
-        assert!(!constant_time_eq(b"secret", b"secret-and-more"));
-    }
 
     #[test]
     fn unknown_methods_share_one_label() {

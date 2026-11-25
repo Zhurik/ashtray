@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod client_ip;
 pub mod config;
 pub mod db;
@@ -19,7 +20,7 @@ use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::HeaderValue;
 use axum::http::header::{self, HeaderName};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post, put};
 use sqlx::SqlitePool;
 use tower::ServiceBuilder;
 use tower::util::option_layer;
@@ -97,18 +98,39 @@ impl AppState {
 /// 8. a panic becomes a JSON `500` rather than a dropped connection;
 /// 9. bodies above `max_body_bytes` are refused;
 ///
-/// and on `/api/entries` alone, the client's rate limit is spent. `/health`
-/// is never limited: a monitor polling it is not a visitor.
+/// and on `/api/entries` and the admin routes alone, the client's rate limit
+/// is spent. `/health` is never limited: a monitor polling it is not a
+/// visitor.
 pub fn router(state: AppState, http: &HttpConfig) -> Router {
-    let entries = Router::new()
+    let rate_limits = RateLimits::new(&http.rate_limit, state.metrics.clone());
+    let mut entries = Router::new()
         .route(
             "/api/entries",
             post(routes::entries::create).get(routes::entries::list),
         )
         .route_layer(axum::middleware::from_fn_with_state(
-            RateLimits::new(&http.rate_limit, state.metrics.clone()),
+            rate_limits.clone(),
             rate_limit::enforce,
         ));
+
+    // Without a key the admin routes are not even registered. With one, the
+    // gate also answers a wrong method with `404`, never a `405` that would
+    // give the route away; the rate limit sits outside it, so guesses cost
+    // budget.
+    if state.admin_key.is_some() {
+        let admin = Router::new()
+            .route("/api/entries/{id}/accept", put(admin::accept))
+            .route("/api/entries/{id}", delete(admin::delete))
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                admin::require_key,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                rate_limits,
+                rate_limit::enforce,
+            ));
+        entries = entries.merge(admin);
+    }
 
     let layers = ServiceBuilder::new()
         .layer(SetRequestIdLayer::new(REQUEST_ID, MakeRequestUuid))
