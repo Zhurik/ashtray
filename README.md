@@ -16,15 +16,17 @@
 [![typos](https://img.shields.io/badge/typos-none%20(hopefully)-blueviolet)](https://github.com/crate-ci/typos)
 
 [![Smoking room](https://img.shields.io/badge/smoking%20room-open-4C4C4C)](#ashtray)
-[![Endpoints](https://img.shields.io/badge/endpoints-3-orange)](#endpoints)
+[![Endpoints](https://img.shields.io/badge/endpoints-5-orange)](#endpoints)
 [![Admin panel](https://img.shields.io/badge/admin%20panel-nope-red)](#what-it-deliberately-does-not-do-yet)
 [![Casino links](https://img.shields.io/badge/casino%20links-incoming-yellow)](#what-it-deliberately-does-not-do-yet)
 
 A guestbook backend. Everything said in the smoking room ends up here.
 
-Three endpoints, one SQLite file, no users, no sessions, no admin panel. It
-exists to back the guestbook page of a static site, so it does the smallest
-thing that can work: take a note, hand the notes back, say whether it is alive.
+Three public endpoints, two hidden ones, one SQLite file, no users, no
+sessions, no admin panel. It exists to back the guestbook page of a static
+site, so it does the smallest thing that can work: take a note, hand the notes
+back, say whether it is alive — and let its owner sort the waitlist with one
+key.
 
 ## Endpoints
 
@@ -82,6 +84,30 @@ curl 'http://127.0.0.1:8080/api/entries?page=1&per_page=20'
   "total": 0,
   "total_pages": 0
 }
+```
+
+With the [admin key](#admin-key) in `x-api-key`, the list holds every entry,
+waitlisted ones included, and `total` counts them all; `waitlisted` on each
+says which is which. A wrong key is not an error — it just gets the public
+list.
+
+### `PUT /api/entries/{id}/accept`
+
+Admin key only. Lets a waitlisted entry into the list and answers `200` with
+the entry as it is now. Accepting one that is already shown changes nothing
+and is not an error; an id that does not exist is `404`.
+
+```sh
+curl -X PUT -H "x-api-key: $ASHTRAY_ADMIN_KEY" http://127.0.0.1:8080/api/entries/42/accept
+```
+
+### `DELETE /api/entries/{id}`
+
+Admin key only. Removes the entry for good and answers `204`; an id that does
+not exist is `404`.
+
+```sh
+curl -X DELETE -H "x-api-key: $ASHTRAY_ADMIN_KEY" http://127.0.0.1:8080/api/entries/42
 ```
 
 ### `GET /health`
@@ -222,6 +248,7 @@ or `120/min`, or `off`.
 | `ASHTRAY_WAITLIST` | `false` | `true` holds every new entry back from the list until it is let through — see [Waitlist](#waitlist) |
 | `ASHTRAY_NTFY_URL` | *(empty: off)* | ntfy topic to announce every new entry on, server and topic together: `https://ntfy.sh/my-topic` |
 | `ASHTRAY_NTFY_TOKEN` | *(empty: no token)* | When set, sent to ntfy as `Authorization: Bearer <token>` |
+| `ASHTRAY_ADMIN_KEY` | *(empty: admin routes off)* | A UUID that unlocks accepting, deleting and the full list — see [Admin key](#admin-key) |
 
 **Metrics**
 
@@ -241,22 +268,40 @@ The binary also answers `ashtray healthcheck` (exit `0` when the server on
 ### Waitlist
 
 With `ASHTRAY_WAITLIST=true`, every new entry is stored with `waitlisted = 1`
-and the list does not show it. There is no admin panel yet: letting an entry
-through is one statement against the database.
+and the list does not show it until it is [accepted](#put-apientriesidaccept)
+— or [deleted](#delete-apientriesid) instead. Entries written before the
+waitlist was switched on, or while it was off, are shown and stay shown;
+switching it off later does not let the waiting ones through.
+
+Without an admin key the same can be done against the database:
 
 ```sh
 sqlite3 /path/to/volume/ashtray.db "UPDATE entries SET waitlisted = 0 WHERE id = 42;"
 ```
 
-Deleting it instead is `DELETE FROM entries WHERE id = 42;`. Entries written
-before the waitlist was switched on, or while it was off, are shown and stay
-shown; switching it off later does not let the waiting ones through.
+### Admin key
+
+`ASHTRAY_ADMIN_KEY` takes a UUID — `uuidgen | tr A-Z a-z` makes one — and a
+request carrying it as `x-api-key: <uuid>` may accept and delete entries and
+see the whole list. Anything else is refused at startup.
+
+To anyone without the key the admin routes do not exist: every method on them
+answers exactly the `404` of a path nobody routed, never a `401` or a `405`
+that would give them away. With no key configured they are not routed at all.
+The key is compared in constant time, never logged, and guesses spend the same
+rate limit budget as reading the list (`ASHTRAY_RATE_LIMIT_GET`).
+
+The key is sent in a header rather than the query string so that it stays out
+of proxy access logs. Use it from `curl` or a script; CORS does not allow the
+header, so a browser page cannot send it.
 
 ### Notifications
 
 With `ASHTRAY_NTFY_URL` set, every new entry is published to that
 [ntfy](https://ntfy.sh) topic: the author in the title, the message and link in
-the body, and for a waitlisted entry the `UPDATE` that lets it through. It
+the body, and for a waitlisted entry the `curl` commands that accept or
+delete it — with `$ASHTRAY_ADMIN_KEY` and `$ASHTRAY_URL` left for your shell
+to fill in, since the key never leaves the server. It
 works with ntfy.sh and with a server of your own; for a topic that needs a
 login, create an access token (`ntfy token add <user>`) and put it in
 `ASHTRAY_NTFY_TOKEN`.
@@ -470,14 +515,12 @@ The registry is configured in the repository settings, not in the code:
 
 ## What it deliberately does not do yet
 
-- **No moderation tools.** The [waitlist](#waitlist) can hold entries back,
-  but letting one through is an `UPDATE` by hand. An endpoint for it is the
-  obvious next step.
+- **No moderation panel.** The [admin key](#admin-key) accepts and deletes
+  entries from `curl`; there is no page for it, and no editing.
 - **Only a rate limit against spam.** No honeypot, no captcha, no link
   filter. The limit slows a spammer down to `ASHTRAY_RATE_LIMIT_POST` per
   address; one with many addresses still gets through.
 - **No shared rate limit.** The counts are per process, so running several
   replicas multiplies every budget. Redis or similar would fix that once there
   is more than one.
-- **No deletion or editing.** Entries only go in. Removing one means a `DELETE`
-  against the database by hand.
+- **No editing.** An entry can be accepted or deleted, but not changed.
