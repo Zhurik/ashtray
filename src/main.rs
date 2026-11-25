@@ -104,6 +104,7 @@ async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
             .bind_addr
             .map_or_else(|| "off".to_owned(), |addr| addr.to_string()),
         waitlist = config.waitlist,
+        admin = config.admin_key.is_some(),
         // The host only: on a public server the topic name is the password.
         ntfy = %config
             .ntfy
@@ -117,6 +118,9 @@ async fn serve(config: Config) -> Result<(), Box<dyn std::error::Error>> {
     let mut state = AppState::new(pool.clone(), config.limits).with_waitlist(config.waitlist);
     if let Some(notifier) = notifier {
         state = state.with_notifier(notifier);
+    }
+    if let Some(key) = config.admin_key.clone() {
+        state = state.with_admin_key(key);
     }
     let app = router(state.clone(), http);
 

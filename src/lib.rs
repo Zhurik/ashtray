@@ -28,7 +28,7 @@ use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetReques
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::config::HttpConfig;
+use crate::config::{HttpConfig, Secret};
 use crate::metrics::Metrics;
 use crate::middleware::REQUEST_ID;
 use crate::models::EntryLimits;
@@ -44,6 +44,8 @@ pub struct AppState {
     pub waitlist: bool,
     /// Where new entries are announced, if anywhere.
     pub notifier: Option<Notifier>,
+    /// The key that unlocks the admin routes; without one they do not exist.
+    pub admin_key: Option<Secret>,
 }
 
 impl AppState {
@@ -55,6 +57,7 @@ impl AppState {
             metrics,
             waitlist: false,
             notifier: None,
+            admin_key: None,
         }
     }
 
@@ -67,6 +70,12 @@ impl AppState {
     /// Announces every new entry through `notifier`.
     pub fn with_notifier(mut self, notifier: Notifier) -> Self {
         self.notifier = Some(notifier);
+        self
+    }
+
+    /// Opens the admin routes to requests that carry `key` in `x-api-key`.
+    pub fn with_admin_key(mut self, key: Secret) -> Self {
+        self.admin_key = Some(key);
         self
     }
 }
