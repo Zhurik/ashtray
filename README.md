@@ -286,10 +286,12 @@ request carrying it as `x-api-key: <uuid>` may accept and delete entries and
 see the whole list. Anything else is refused at startup.
 
 To anyone without the key the admin routes do not exist: every method on them
-answers exactly the `404` of a path nobody routed, never a `401` or a `405`
-that would give them away. With no key configured they are not routed at all.
-The key is compared in constant time, never logged, and guesses spend the same
-rate limit budget as reading the list (`ASHTRAY_RATE_LIMIT_GET`).
+answers exactly the `404` of a path nobody routed — same body, same headers,
+never a `401`, a `405`, an `Allow` or a `429` that would give them away. With
+no key configured they are not routed at all. The key is compared in constant
+time and never logged. Requests with the key spend the same rate limit budget
+as reading the list (`ASHTRAY_RATE_LIMIT_GET`); the full list is sent with
+`Cache-Control: private, no-store` so that no cache in between keeps it.
 
 The key is sent in a header rather than the query string so that it stays out
 of proxy access logs. Use it from `curl` or a script; CORS does not allow the

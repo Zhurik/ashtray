@@ -20,7 +20,7 @@ use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::HeaderValue;
 use axum::http::header::{self, HeaderName};
-use axum::routing::{delete, get, post, put};
+use axum::routing::{any, get, post};
 use sqlx::SqlitePool;
 use tower::ServiceBuilder;
 use tower::util::option_layer;
@@ -113,21 +113,24 @@ pub fn router(state: AppState, http: &HttpConfig) -> Router {
             rate_limit::enforce,
         ));
 
-    // Without a key the admin routes are not even registered. With one, the
-    // gate also answers a wrong method with `404`, never a `405` that would
-    // give the route away; the rate limit sits outside it, so guesses cost
-    // budget.
+    // Without a key the admin routes are not even registered. With one, they
+    // take any method and check it themselves: axum stamps `Allow` on every
+    // answer of a route bound to particular methods, the gate's `404`
+    // included, and that would give them away. The gate sits outside the
+    // rate limit, so a request without the key never gets a `429` an
+    // unrouted path would not; both are route layers, so the app's own
+    // fallback stays unlimited.
     if state.admin_key.is_some() {
         let admin = Router::new()
-            .route("/api/entries/{id}/accept", put(admin::accept))
-            .route("/api/entries/{id}", delete(admin::delete))
-            .layer(axum::middleware::from_fn_with_state(
-                state.clone(),
-                admin::require_key,
-            ))
-            .layer(axum::middleware::from_fn_with_state(
+            .route("/api/entries/{id}/accept", any(admin::accept))
+            .route("/api/entries/{id}", any(admin::delete))
+            .route_layer(axum::middleware::from_fn_with_state(
                 rate_limits,
                 rate_limit::enforce,
+            ))
+            .route_layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                admin::require_key,
             ));
         entries = entries.merge(admin);
     }

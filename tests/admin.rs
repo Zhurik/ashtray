@@ -211,26 +211,136 @@ async fn with_no_key_configured_the_routes_do_not_exist() {
     assert_eq!(stored(&pool).await, [(id, true)]);
 }
 
-#[tokio::test]
-async fn guessing_the_key_is_rate_limited() {
-    let state =
-        AppState::new(pool().await, EntryLimits::default()).with_admin_key(Secret::new(KEY));
+/// The admin app with a tight budget for both reading and writing.
+fn limited_admin_app(pool: SqlitePool) -> Router {
+    let state = AppState::new(pool, EntryLimits::default()).with_admin_key(Secret::new(KEY));
     let http = HttpConfig {
         rate_limit: RateLimitConfig {
-            post: None,
-            get: Some(Rate::new(2, Duration::from_secs(3600))),
+            post: Some(Rate::new(1, Duration::from_secs(3600))),
+            get: Some(Rate::new(1, Duration::from_secs(3600))),
         },
         ..HttpConfig::default()
     };
-    let app = router(state, &http);
+    router(state, &http)
+}
 
-    for _ in 0..2 {
-        let (status, _) = send(&app, request("DELETE", "/api/entries/1", Some("hunter2"))).await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
+#[tokio::test]
+async fn without_the_key_the_routes_are_never_rate_limited() {
+    let app = limited_admin_app(pool().await);
+    send(&app, request("GET", "/api/entries", None)).await;
+    let (spent, _) = send(&app, request("GET", "/api/entries", None)).await;
+    assert_eq!(spent, StatusCode::TOO_MANY_REQUESTS);
+
+    for (method, uri) in [("DELETE", "/api/entries/1"), ("GET", "/api/entries/1")] {
+        let (status, _) = send(&app, request(method, uri, None)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}");
     }
-    let (status, _) = send(&app, request("DELETE", "/api/entries/1", Some("hunter2"))).await;
+}
 
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+#[tokio::test]
+async fn configuring_the_key_does_not_rate_limit_unrouted_paths() {
+    let app = limited_admin_app(pool().await);
+
+    for _ in 0..3 {
+        for method in ["POST", "GET"] {
+            let (status, _) = send(&app, request(method, "/wp-login.php", None)).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{method}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_key_spends_the_reading_budget() {
+    let app = limited_admin_app(pool().await);
+
+    let (first, _) = send(&app, request("DELETE", "/api/entries/1", Some(KEY))).await;
+    let (second, _) = send(&app, request("DELETE", "/api/entries/1", Some(KEY))).await;
+
+    assert_eq!(first, StatusCode::NOT_FOUND);
+    assert_eq!(second, StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// Status, headers and body of a reply, minus the request id that differs on
+/// every reply anyway and the length that only the listener fills in.
+async fn reply(
+    app: &Router,
+    request: Request<Body>,
+) -> (StatusCode, Vec<(String, String)>, Vec<u8>) {
+    let response = app.clone().oneshot(request).await.expect("response");
+    let status = response.status();
+    let mut headers: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        // hyper sets the length on the wire for both alike.
+        .filter(|(name, _)| *name != "x-request-id" && *name != "content-length")
+        .map(|(name, value)| (name.to_string(), value.to_str().unwrap_or("").to_owned()))
+        .collect();
+    headers.sort();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    (status, headers, body.to_vec())
+}
+
+#[tokio::test]
+async fn without_the_key_no_header_gives_the_routes_away() {
+    let app = admin_app(pool().await);
+    let expected = reply(&app, request("GET", "/api/does-not-exist", None)).await;
+
+    for method in ["GET", "HEAD", "PUT", "POST", "PATCH", "DELETE", "OPTIONS"] {
+        for uri in ["/api/entries/1", "/api/entries/1/accept"] {
+            let mut got = reply(&app, request(method, uri, None)).await;
+            let mut expected = expected.clone();
+            // A HEAD answer loses its body on the wire either way; in process
+            // only the routed one has already lost it.
+            if method == "HEAD" {
+                got.2.clear();
+                expected.2.clear();
+            }
+            assert_eq!(got, expected, "{method} {uri}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn with_the_key_a_wrong_method_is_not_allowed() {
+    let app = admin_app(pool().await);
+
+    for (method, uri, allow) in [
+        ("POST", "/api/entries/1/accept", "PUT"),
+        ("GET", "/api/entries/1", "DELETE"),
+    ] {
+        let (status, headers, _) = reply(&app, request(method, uri, Some(KEY))).await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{method} {uri}");
+        assert!(
+            headers.contains(&("allow".to_owned(), allow.to_owned())),
+            "{method} {uri}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_admin_list_is_never_cached() {
+    let app = admin_app(pool().await);
+
+    let (_, admin, _) = reply(&app, request("GET", "/api/entries", Some(KEY))).await;
+    let (_, public, _) = reply(&app, request("GET", "/api/entries", None)).await;
+
+    let get = |headers: &[(String, String)], name: &str| {
+        headers
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.clone())
+    };
+    assert_eq!(
+        get(&admin, "cache-control").as_deref(),
+        Some("private, no-store")
+    );
+    assert_eq!(get(&admin, "vary").as_deref(), Some("x-api-key"));
+    assert_eq!(get(&public, "vary").as_deref(), Some("x-api-key"));
 }
 
 #[tokio::test]

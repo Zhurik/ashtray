@@ -1,6 +1,7 @@
 use axum::Json;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use chrono::{SecondsFormat, Utc};
 
 use crate::AppState;
@@ -59,12 +60,13 @@ pub async fn list(
     State(state): State<AppState>,
     headers: HeaderMap,
     ApiQuery(pagination): ApiQuery<Pagination>,
-) -> Result<Json<EntryPage>, ApiError> {
+) -> Result<Response, ApiError> {
     let per_page = pagination.per_page(&state.limits);
     let page = pagination.page();
     // Fixed strings rather than a bound flag, so the public query keeps
     // matching the partial index on shown entries.
-    let (count, select) = if admin::is_admin(&state, &headers) {
+    let is_admin = admin::is_admin(&state, &headers);
+    let (count, select) = if is_admin {
         (COUNT_ALL, PAGE_ALL)
     } else {
         (COUNT_SHOWN, PAGE_SHOWN)
@@ -83,11 +85,23 @@ pub async fn list(
     // `div_ceil` is stable for unsigned integers only, and the count is never negative.
     let total_pages = (total as u64).div_ceil(u64::from(per_page)) as u32;
 
-    Ok(Json(EntryPage {
+    let mut response = Json(EntryPage {
         items,
         page,
         per_page,
         total,
         total_pages,
-    }))
+    })
+    .into_response();
+    // The answer depends on the key, so no cache may hand the full list to
+    // whoever asks next.
+    let headers = response.headers_mut();
+    headers.insert(header::VARY, HeaderValue::from_static("x-api-key"));
+    if is_admin {
+        headers.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, no-store"),
+        );
+    }
+    Ok(response)
 }
