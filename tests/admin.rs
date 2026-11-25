@@ -232,3 +232,55 @@ async fn guessing_the_key_is_rate_limited() {
 
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 }
+
+#[tokio::test]
+async fn the_key_shows_every_entry_with_its_status() {
+    let app = admin_app(pool().await);
+    let older = post_entry(&app, "Accepted.").await;
+    let newer = post_entry(&app, "Waiting.").await;
+    send(
+        &app,
+        request("PUT", &format!("/api/entries/{older}/accept"), Some(KEY)),
+    )
+    .await;
+
+    let (status, page) = send(&app, request("GET", "/api/entries", Some(KEY))).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page["total"], 2);
+    assert_eq!(page["total_pages"], 1);
+    assert_eq!(page["items"][0]["id"], newer);
+    assert_eq!(page["items"][0]["waitlisted"], true);
+    assert_eq!(page["items"][1]["id"], older);
+    assert_eq!(page["items"][1]["waitlisted"], false);
+}
+
+#[tokio::test]
+async fn a_wrong_key_gets_the_public_list() {
+    let app = admin_app(pool().await);
+    let shown = post_entry(&app, "Accepted.").await;
+    post_entry(&app, "Waiting.").await;
+    send(
+        &app,
+        request("PUT", &format!("/api/entries/{shown}/accept"), Some(KEY)),
+    )
+    .await;
+
+    let (status, page) = send(&app, request("GET", "/api/entries", Some("hunter2"))).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page["total"], 1);
+    assert_eq!(page["items"][0]["id"], shown);
+}
+
+#[tokio::test]
+async fn without_admin_configured_the_key_is_ignored_on_the_list() {
+    let state = AppState::new(pool().await, EntryLimits::default()).with_waitlist(true);
+    let app = router(state, &unlimited());
+    post_entry(&app, "Waiting.").await;
+
+    let (status, page) = send(&app, request("GET", "/api/entries", Some(KEY))).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page["total"], 0);
+}
