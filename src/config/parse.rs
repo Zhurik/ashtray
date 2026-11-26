@@ -191,6 +191,13 @@ pub fn ntfy_url(raw: &str) -> Result<url::Url, String> {
     Ok(url)
 }
 
+/// A UUID, kept exactly as written: the client has to send the same text.
+pub fn uuid(raw: &str) -> Result<String, String> {
+    uuid::Uuid::try_parse(raw)
+        .map(|_| raw.to_owned())
+        .map_err(|_| "is not a UUID; make one with `uuidgen`".to_owned())
+}
+
 /// Anything that fits in an `Authorization: Bearer …` header.
 pub fn bearer_token(raw: &str) -> Result<String, String> {
     HeaderValue::from_str(&format!("Bearer {raw}"))

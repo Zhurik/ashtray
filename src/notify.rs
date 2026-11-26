@@ -49,10 +49,13 @@ impl Message {
             body.push_str("\n\n");
             body.push_str(url);
         }
+        // The notifier knows neither the public address nor, deliberately,
+        // the key: both stay shell variables for the reader to fill in.
         if entry.waitlisted {
+            let id = entry.id;
             body.push_str(&format!(
-                "\n\nUPDATE entries SET waitlisted = 0 WHERE id = {};",
-                entry.id
+                "\n\ncurl -X PUT -H \"x-api-key: $ASHTRAY_ADMIN_KEY\" \"$ASHTRAY_URL/api/entries/{id}/accept\"\
+                 \ncurl -X DELETE -H \"x-api-key: $ASHTRAY_ADMIN_KEY\" \"$ASHTRAY_URL/api/entries/{id}\""
             ));
         }
 
@@ -152,10 +155,11 @@ mod tests {
             "New guestbook entry from someone anonymous, waiting for approval"
         );
         assert!(message.tags.contains("hourglass"));
-        assert!(
-            message
-                .body
-                .ends_with("UPDATE entries SET waitlisted = 0 WHERE id = 7;")
-        );
+        assert!(message.body.ends_with(concat!(
+            "\n\n",
+            r#"curl -X PUT -H "x-api-key: $ASHTRAY_ADMIN_KEY" "$ASHTRAY_URL/api/entries/7/accept""#,
+            "\n",
+            r#"curl -X DELETE -H "x-api-key: $ASHTRAY_ADMIN_KEY" "$ASHTRAY_URL/api/entries/7""#,
+        )));
     }
 }

@@ -44,6 +44,9 @@ pub struct Config {
     /// them through in the database.
     pub waitlist: bool,
     pub ntfy: NtfyConfig,
+    /// The key that unlocks accepting, deleting and listing every entry.
+    /// `None` leaves those routes out altogether.
+    pub admin_key: Option<Secret>,
 }
 
 /// Where new entries are announced.
@@ -382,6 +385,9 @@ impl Config {
         let metrics = Self::read_metrics(&mut reader, bind_addr);
         let waitlist = reader.read("ASHTRAY_WAITLIST", false, parse::boolean);
         let ntfy = Self::read_ntfy(&mut reader);
+        let admin_key = reader.read("ASHTRAY_ADMIN_KEY", None, |raw| {
+            parse::uuid(raw).map(|key| Some(Secret::new(key)))
+        });
 
         reader.finish(Self {
             bind_addr,
@@ -393,6 +399,7 @@ impl Config {
             metrics,
             waitlist,
             ntfy,
+            admin_key,
         })
     }
 
@@ -748,6 +755,31 @@ mod tests {
 
         assert!(!config.waitlist);
         assert!(config.ntfy.url.is_none());
+    }
+
+    #[test]
+    fn the_admin_key_is_off_by_default() {
+        assert!(config(&[]).expect("defaults").admin_key.is_none());
+    }
+
+    #[test]
+    fn the_admin_key_is_a_secret_uuid() {
+        let config = config(&[("ASHTRAY_ADMIN_KEY", "00000000-0000-4000-8000-000000000001")])
+            .expect("admin key");
+
+        assert_eq!(
+            config.admin_key.as_ref().map(Secret::expose),
+            Some("00000000-0000-4000-8000-000000000001")
+        );
+        assert!(!format!("{config:?}").contains("4000-8000"));
+    }
+
+    #[test]
+    fn an_admin_key_that_is_not_a_uuid_is_refused() {
+        assert_eq!(
+            rejected(&[("ASHTRAY_ADMIN_KEY", "hunter2")]),
+            ["ASHTRAY_ADMIN_KEY"]
+        );
     }
 
     #[test]

@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod client_ip;
 pub mod config;
 pub mod db;
@@ -19,7 +20,7 @@ use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::HeaderValue;
 use axum::http::header::{self, HeaderName};
-use axum::routing::{get, post};
+use axum::routing::{any, get, post};
 use sqlx::SqlitePool;
 use tower::ServiceBuilder;
 use tower::util::option_layer;
@@ -28,7 +29,7 @@ use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetReques
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::config::HttpConfig;
+use crate::config::{HttpConfig, Secret};
 use crate::metrics::Metrics;
 use crate::middleware::REQUEST_ID;
 use crate::models::EntryLimits;
@@ -44,6 +45,8 @@ pub struct AppState {
     pub waitlist: bool,
     /// Where new entries are announced, if anywhere.
     pub notifier: Option<Notifier>,
+    /// The key that unlocks the admin routes; without one they do not exist.
+    pub admin_key: Option<Secret>,
 }
 
 impl AppState {
@@ -55,6 +58,7 @@ impl AppState {
             metrics,
             waitlist: false,
             notifier: None,
+            admin_key: None,
         }
     }
 
@@ -67,6 +71,12 @@ impl AppState {
     /// Announces every new entry through `notifier`.
     pub fn with_notifier(mut self, notifier: Notifier) -> Self {
         self.notifier = Some(notifier);
+        self
+    }
+
+    /// Opens the admin routes to requests that carry `key` in `x-api-key`.
+    pub fn with_admin_key(mut self, key: Secret) -> Self {
+        self.admin_key = Some(key);
         self
     }
 }
@@ -88,18 +98,42 @@ impl AppState {
 /// 8. a panic becomes a JSON `500` rather than a dropped connection;
 /// 9. bodies above `max_body_bytes` are refused;
 ///
-/// and on `/api/entries` alone, the client's rate limit is spent. `/health`
-/// is never limited: a monitor polling it is not a visitor.
+/// and on `/api/entries` and the admin routes alone, the client's rate limit
+/// is spent. `/health` is never limited: a monitor polling it is not a
+/// visitor.
 pub fn router(state: AppState, http: &HttpConfig) -> Router {
-    let entries = Router::new()
+    let rate_limits = RateLimits::new(&http.rate_limit, state.metrics.clone());
+    let mut entries = Router::new()
         .route(
             "/api/entries",
             post(routes::entries::create).get(routes::entries::list),
         )
         .route_layer(axum::middleware::from_fn_with_state(
-            RateLimits::new(&http.rate_limit, state.metrics.clone()),
+            rate_limits.clone(),
             rate_limit::enforce,
         ));
+
+    // Without a key the admin routes are not even registered. With one, they
+    // take any method and check it themselves: axum stamps `Allow` on every
+    // answer of a route bound to particular methods, the gate's `404`
+    // included, and that would give them away. The gate sits outside the
+    // rate limit, so a request without the key never gets a `429` an
+    // unrouted path would not; both are route layers, so the app's own
+    // fallback stays unlimited.
+    if state.admin_key.is_some() {
+        let admin = Router::new()
+            .route("/api/entries/{id}/accept", any(admin::accept))
+            .route("/api/entries/{id}", any(admin::delete))
+            .route_layer(axum::middleware::from_fn_with_state(
+                rate_limits,
+                rate_limit::enforce,
+            ))
+            .route_layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                admin::require_key,
+            ));
+        entries = entries.merge(admin);
+    }
 
     let layers = ServiceBuilder::new()
         .layer(SetRequestIdLayer::new(REQUEST_ID, MakeRequestUuid))

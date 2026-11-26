@@ -51,7 +51,9 @@ impl RateLimits {
     fn for_method(&self, method: &Method) -> Option<&Limiter> {
         match *method {
             Method::POST => self.post.as_deref(),
-            Method::GET | Method::HEAD => self.get.as_deref(),
+            // The admin routes share the reading budget: the writing one is
+            // too tight for an afternoon of moderation.
+            Method::GET | Method::HEAD | Method::PUT | Method::DELETE => self.get.as_deref(),
             _ => None,
         }
     }
